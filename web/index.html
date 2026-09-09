@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="studio-token" content="__TOKEN__">
+  <meta name="studio-catalog" content="__CATALOG__">
+  <title>UpVideo Studio · Không gian xuất bản</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+<aside class="sidebar">
+  <a class="brand" href="/" aria-label="UpVideo Studio"><span class="brand-icon">▶</span><span>upvideo<span class="brand-small">STUDIO</span></span></a>
+  <div class="workspace-label">KHÔNG GIAN LÀM VIỆC</div>
+  <nav aria-label="Điều hướng chính">
+    <button class="nav active" data-view="queue"><span>▦</span> Hàng đợi <b id="nav-count">0</b></button>
+    <button class="nav" data-view="channels"><span>◉</span> Kênh của tôi</button>
+    <button class="nav" data-view="history"><span>◷</span> Nhật ký hoạt động</button>
+    <button class="nav" data-view="guide"><span>◇</span> Hướng dẫn</button>
+  </nav>
+  <div class="sidebar-bottom"><div class="local-status"><i></i> Chạy trên máy của bạn</div><p>Nội dung và hàng đợi được lưu cục bộ.</p><div class="version">UPVIDEO STUDIO <span>__VERSION__</span></div></div>
+</aside>
+<main>
+  <header class="topbar"><div><span class="breadcrumb">Không gian làm việc</span><span class="crumb-slash">/</span><span id="crumb">Hàng đợi</span></div><span id="connection" class="connection">Đang kết nối…</span></header>
+  <div id="offline-notice" class="notice" role="alert" hidden><b>Chưa kết nối được ứng dụng</b><p id="offline-message"></p><a href="/" class="button small">Tải lại giao diện</a></div>
+  <div class="page">
+    <section id="view-queue" class="view">
+      <div class="page-heading"><div><div class="eyebrow">PUBLISH WITH INTENTION</div><h1>Mỗi video. Đúng thời điểm.</h1><p>Chuẩn bị nội dung, xếp lịch và theo dõi mọi lượt tải lên trong một nơi.</p></div><button class="button primary" id="import-open"><span>＋</span> Thêm video</button></div>
+      <div class="stats">
+        <article><span class="stat-icon violet">▤</span><div><p>Trong hàng đợi</p><strong id="stat-pending">0</strong><small>video đang chuẩn bị</small></div></article>
+        <article><span class="stat-icon blue">↥</span><div><p>Đang tải lên</p><strong id="stat-active">0</strong><small>tự lưu tiến trình</small></div></article>
+        <article><span class="stat-icon green">✓</span><div><p>Đã tải lên</p><strong id="stat-done">0</strong><small>đã xác nhận trên YouTube</small></div></article>
+        <article><span class="stat-icon amber">!</span><div><p>Cần chú ý</p><strong id="stat-error">0</strong><small id="error-caption">mọi thứ đang ổn</small></div></article>
+      </div>
+      <div class="queue-card">
+        <div class="queue-title"><div><h2>Hàng đợi xuất bản <span id="total-count" class="counter">0</span></h2><p>Nội dung sẵn sàng bắt đầu từ đây.</p></div><button class="button subtle" id="pause-all">Ⅱ Tạm dừng tất cả</button></div>
+        <div class="toolbar"><div class="tabs" role="group" aria-label="Lọc trạng thái"><button class="tab active" data-filter="all">Tất cả</button><button class="tab" data-filter="draft">Bản nháp</button><button class="tab" data-filter="active">Đang chạy</button><button class="tab" data-filter="done">Đã tải lên</button><button class="tab" data-filter="issues">Cần chú ý</button></div><div class="search-wrap"><span>⌕</span><input id="search" type="search" placeholder="Tìm tên video…" aria-label="Tìm tên video"></div></div>
+        <div class="channel-filter"><label for="channel-filter">Kênh</label><select id="channel-filter"><option value="">Tất cả các kênh</option></select><span id="selection-label">Chưa chọn video</span><button class="button small danger" id="remove-selected" title="Tích chọn video chưa bắt đầu upload để xóa bản nháp; giữ nguyên file trên máy">Xóa bản nháp</button><button class="button small" id="bulk-open">Khai báo nội dung</button><button class="button small" id="schedule-open">◷ Xếp lịch</button><button class="button primary small" id="start-selected">▶ Bắt đầu</button></div>
+        <div class="table-scroll"><table><thead><tr><th><input type="checkbox" id="select-all" aria-label="Chọn tất cả video đang hiển thị"></th><th>VIDEO</th><th>KÊNH</th><th>LỊCH / HIỂN THỊ</th><th>TRẠNG THÁI</th><th></th></tr></thead><tbody id="jobs"></tbody></table></div>
+        <div id="empty" class="empty"><div class="empty-art"><div class="art-grid"></div><div class="film-card back"></div><div class="film-card"><span class="film-label">YOUR NEXT STORY</span><div class="play-circle">▶</div><div class="film-lines"><i></i><i></i></div></div><span class="floating-check">✓</span><span class="floating-star">✦</span></div><h3>Một câu chuyện mới đang chờ lên sóng</h3><p>Thêm thư mục video để bắt đầu. Bạn có thể kiểm tra<br>và chỉnh sửa mọi chi tiết trước khi tải lên.</p><button class="button primary" id="empty-add">＋ Thêm video đầu tiên</button><div class="empty-formats">MP4 · MOV · MKV · AVI · WEBM · M4V</div></div>
+        <div id="no-results" class="no-results" hidden>Không có video phù hợp. Thử bộ lọc khác.</div>
+        <footer class="table-footer"><span id="table-summary">0 video</span><span><i class="tiny-dot"></i> Tự động lưu trên máy</span></footer>
+      </div>
+      <div class="tip"><span>✧</span><p><b>Mẹo nhỏ, quy trình gọn hơn.</b> Đặt file nội dung và ảnh cùng tên video, ví dụ <code>video-01.mp4</code>, <code>video-01.txt</code> và <code>video-01.jpg</code>.</p><button class="text-button" data-view="guide">Xem hướng dẫn ↗</button></div>
+    </section>
+    <section id="view-channels" class="view" hidden><div class="page-heading"><div><div class="eyebrow">YOUR CHANNELS</div><h1>Đúng kênh. Đúng nội dung.</h1><p>Kết nối qua Google và kiểm tra tên kênh trước khi xuất bản.</p></div><button class="button primary" id="connect-open">＋ Kết nối kênh</button></div><div id="channels-grid" class="channels-grid"></div><div class="notice"><b>Thông tin đăng nhập được bảo vệ.</b><p>Token được mã hóa bằng tài khoản Windows hiện tại. Ngắt kết nối sẽ xóa token trên máy; bạn có thể thu hồi quyền của ứng dụng tại trang bảo mật Google.</p></div></section>
+    <section id="view-history" class="view" hidden><div class="page-heading"><div><div class="eyebrow">ACTIVITY</div><h1>Mọi bước đều có dấu vết.</h1><p>100 hoạt động gần nhất; nhật ký không chứa token đăng nhập.</p></div></div><div class="queue-card" id="events"></div></section>
+    <section id="view-guide" class="view" hidden><div class="page-heading"><div><div class="eyebrow">A BETTER WORKFLOW</div><h1>Từ thư mục đến lên sóng.</h1><p>Bốn bước để xuất bản có kiểm soát.</p></div></div><div class="guide-grid"><article class="guide"><b class="step">01</b><h2>Kết nối kênh</h2><p>Trong Google Cloud, bật YouTube Data API v3, tạo OAuth client loại Desktop app và tải JSON. Chọn “Kết nối kênh”, tải JSON, rồi đăng nhập trên trang Google.</p><p>Ở chế độ Testing, thêm email của bạn vào Test users. Token có thể hết hiệu lực sau 7 ngày, cần kết nối lại.</p></article><article class="guide"><b class="step">02</b><h2>Chuẩn bị nội dung</h2><p>Mỗi video dùng TXT/DOCX và ảnh cùng tên. Thư mục chỉ có một video có thể dùng info.txt. Quét cả thư mục con; mỗi video là một công việc riêng.</p><pre>Title:
+Tiêu đề của video
+
+Video Description:
+Mô tả, liên kết và hashtag
+
+Tags:
+du lịch, trải nghiệm</pre><button class="button small" id="download-template">↓ Tải mẫu TXT</button></article><article class="guide"><b class="step">03</b><h2>Xem lại và xếp lịch</h2><p>Bấm vào video để sửa tiêu đề, mô tả, tag và chọn nhiều playlist. Xác nhận nội dung trẻ em và nội dung tổng hợp cần khai báo. Chọn nhiều video để xếp lịch nối tiếp lịch có trên kênh.</p><p>“Mỗi 1 ngày” là hằng ngày; “Mỗi 2 ngày” là cách ngày. Múi giờ cố định được hiển thị rõ trong màn hình xếp lịch.</p></article><article class="guide"><b class="step">04</b><h2>Tải lên và theo dõi</h2><p>Chỉ tải lên khi bấm Bắt đầu. Có thể tạm dừng, đóng và mở lại chương trình để tiếp tục phiên còn hiệu lực. Giữ nguyên file video trong khi tải.</p><p>“Đã tải lên” không đồng nghĩa video đã phát công khai hoặc xử lý xong. Bấm “Mở video” để kiểm tra trên YouTube. Project API chưa được audit có thể bị giới hạn video riêng tư.</p></article></div><div class="notice"><b>Khi cần thử lại</b><p>Video ID được lưu trước khi xử lý thumbnail và playlist. Nếu các bước này lỗi, “Thử lại” chỉ tiếp tục phần còn thiếu. Phiên upload hết hạn cần kiểm tra YouTube Studio trước khi tạo lại phiên. Không dùng file done.json của tool cũ để suy đoán trạng thái.</p></div></section>
+  </div>
+  <footer class="page-footer">Được tạo để bạn tập trung vào nội dung.<span>UpVideo Studio · Local workspace</span></footer>
+</main>
+<div id="toasts" role="status" aria-live="polite"></div>
+<dialog id="modal"><div class="modal-heading"><div><span class="eyebrow" id="modal-kicker">UPVIDEO STUDIO</span><h2 id="modal-title"></h2></div><button class="icon-button" id="modal-close" aria-label="Đóng">×</button></div><div id="modal-body"></div></dialog>
+<div id="busy" hidden><div class="busy-card"><div class="spinner"></div><h3 id="busy-title">Đang xử lý…</h3><p>Bạn không cần giữ cửa sổ này ở phía trước.</p></div></div>
+</body></html>

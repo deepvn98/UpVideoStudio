@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+*.db*
+*.lock
+dist/
+build/
+*.spec
+client_secret*.json
+firebase_key.json
