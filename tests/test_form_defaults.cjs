@@ -36,3 +36,40 @@ test('visibility offers every status supported by the YouTube video API',()=>{
   for(const value of ['private','unlisted','public','schedule'])assert.match(source,new RegExp(`visibilityOption\\('${value}'`));
   assert.match(source,/YouTube Data API chưa hỗ trợ tạo Premiere/);
 });
+
+test('each queue row can override or inherit the channel publishing mode',()=>{
+  for(const value of ['inherit','private','unlisted','public','schedule'])assert.match(source,new RegExp(`\\['${value}',`));
+  assert.match(source,/data-publishing=/);
+  assert.match(source,/publishing_override/);
+  assert.match(source,/api\('\/api\/visibility'/);
+  assert.match(source,/id="overwrite-publishing"/);
+});
+
+test('publishing priority resolves inherited and per-video modes correctly',()=>{
+  const line=source.split('\n').find(value=>value.startsWith('function publishingMode('));
+  const scope={};vm.runInNewContext(line+'\nthis.mode=publishingMode;',scope);
+  assert.equal(scope.mode({publishing_override:false,privacy:'unlisted',publish_at:''}),'inherit');
+  assert.equal(scope.mode({publishing_override:true,privacy:'unlisted',publish_at:''}),'unlisted');
+  assert.equal(scope.mode({publishing_override:true,privacy:'private',publish_at:'2035-01-01T00:00:00Z'}),'schedule');
+});
+
+test('content editor no longer silently changes publishing priority',()=>{
+  const submit=source.split('\n').find(line=>line.includes("$('#edit-form').onsubmit"));
+  assert.doesNotMatch(submit,/edit-privacy|edit-time|publish_at|privacy:/);
+  assert.doesNotMatch(source,/id="edit-privacy"|id="edit-time"/);
+});
+
+test('background refresh does not close an active publishing dropdown',()=>{
+  assert.match(source,/function publishingEditorActive\(\)/);
+  assert.match(source,/if\(!publishingEditorActive\(\)\)render\(\)/);
+  assert.match(source,/e\.target\.blur\(\);try\{await setPublishing/);
+  assert.match(source,/addEventListener\('focusout'/);
+});
+
+test('per-video schedule always uses a 24-hour time field',()=>{
+  assert.match(source,/id="video-publish-time" inputmode="numeric"/);
+  assert.match(source,/Giờ công khai \(24 giờ\)/);
+  assert.match(source,/Nhập theo định dạng HH:mm, từ 00:00 đến 23:59/);
+  assert.match(source,/\(\?:\[01\]\\d\|2\[0-3\]\):\[0-5\]\\d/);
+  assert.doesNotMatch(source,/id="video-publish-at"/);
+});

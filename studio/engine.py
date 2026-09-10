@@ -61,6 +61,7 @@ class Engine:
         while not self.stop.wait(.25):
             with self.lock:
                 self.active = {k: f for k, f in self.active.items() if not f.done()}
+                # Store order is the user-defined upload order inside each channel.
                 queued = self.store.jobs(state='queued')
                 if not queued:
                     continue

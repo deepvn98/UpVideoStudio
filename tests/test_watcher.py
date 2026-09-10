@@ -136,6 +136,19 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(job['privacy'], 'unlisted')
         self.assertEqual(job['publish_at'], '')
 
+    def test_folder_sync_preserves_a_video_publishing_override(self):
+        self.app.store.save_automation('a', schedule={
+            'date': '2035-01-01', 'slots': '08:00', 'interval': 1, 'offset': 0,
+            'sync': False, 'visibility': 'private'})
+        (self.folder/'a.mp4').write_bytes(b'one')
+        self.sync()
+        job = self.app.store.jobs()[0]
+        self.app.store.update(job['id'], privacy='unlisted', publishing_override=True)
+        self.app.watcher.tick()
+        preserved = self.app.store.job(job['id'])
+        self.assertEqual(preserved['privacy'], 'unlisted')
+        self.assertTrue(preserved['publishing_override'])
+
     def test_legacy_unconfigured_draft_inherits_rules_from_configured_videos(self):
         for name, content in [('a.mp4', b'one'), ('b.mp4', b'two'), ('c.mp4', b'three')]:
             (self.folder/name).write_bytes(content)

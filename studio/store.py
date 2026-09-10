@@ -26,6 +26,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,
                 time TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL);
         ''')
+        self._normalize_queue_positions()
         # A restart never silently resumes publishing.
         for job in self.jobs():
             if job['state'] in ('uploading', 'queued', 'finishing'):
@@ -33,8 +34,26 @@ class Store:
 
     def jobs(self, state=None):
         with self.lock:
-            rows = self.db.execute('SELECT data FROM jobs WHERE state=? ORDER BY rowid', (state,)) if state else self.db.execute('SELECT data FROM jobs ORDER BY rowid')
-            return [json.loads(r[0]) for r in rows]
+            rows = (self.db.execute('SELECT rowid,data FROM jobs WHERE state=? ORDER BY rowid', (state,))
+                    if state else self.db.execute('SELECT rowid,data FROM jobs ORDER BY rowid'))
+            jobs = [(r[0], json.loads(r[1])) for r in rows]
+            jobs.sort(key=lambda item: (item[1].get('queue_position', item[0]), item[0]))
+            return [job for _, job in jobs]
+
+    def _normalize_queue_positions(self):
+        """Give legacy and current jobs a stable, contiguous order inside each account."""
+        with self.lock, self.db:
+            rows = [(row[0], json.loads(row[1])) for row in
+                    self.db.execute('SELECT rowid,data FROM jobs ORDER BY rowid')]
+            accounts = {}
+            for rowid, job in rows:
+                accounts.setdefault(job['account'], []).append((rowid, job))
+            for items in accounts.values():
+                items.sort(key=lambda item: (item[1].get('queue_position', item[0]), item[0]))
+                for position, (_, job) in enumerate(items):
+                    if job.get('queue_position') != position:
+                        job['queue_position'] = position
+                        self.db.execute('UPDATE jobs SET data=? WHERE id=?', (json.dumps(job), job['id']))
 
     def job(self, jid):
         with self.lock:
@@ -45,8 +64,10 @@ class Store:
 
     def add(self, data, account):
         channel = self.account(account)
+        positions = [job.get('queue_position', -1) for job in self.jobs() if job['account'] == account]
         job = dict(data, id=uuid.uuid4().hex, account=account, state='draft', progress=0,
                    session='', video_id='', uploaded=0, error='', completed_playlists=[], thumbnail_done=False,
+                   publishing_override=False, queue_position=max(positions, default=-1) + 1,
                    channel_id=channel['channel_id'] if channel else account)
         with self.lock, self.db:
             try:
@@ -72,6 +93,25 @@ class Store:
     def remove(self, ids):
         with self.lock, self.db:
             self.db.executemany('DELETE FROM jobs WHERE id=?', [(jid,) for jid in ids])
+            self._normalize_queue_positions()
+
+    def reorder(self, jid, target_id, after=False):
+        """Move one queue item relative to another item from the same account."""
+        with self.lock, self.db:
+            job, target = self.job(jid), self.job(target_id)
+            if job['account'] != target['account']:
+                raise ValueError('Không thể chuyển video sang vùng của kênh khác.')
+            ordered = [item for item in self.jobs() if item['account'] == job['account']]
+            ordered = [item for item in ordered if item['id'] != jid]
+            index = next((index for index, item in enumerate(ordered) if item['id'] == target_id), None)
+            if index is None:
+                raise ValueError('Không tìm thấy vị trí thả video.')
+            ordered.insert(index + (1 if after else 0), job)
+            for position, item in enumerate(ordered):
+                if item.get('queue_position') != position:
+                    item['queue_position'] = position
+                    self.db.execute('UPDATE jobs SET data=? WHERE id=?', (json.dumps(item), item['id']))
+            return ordered
 
     def accounts(self):
         with self.lock:

@@ -139,6 +139,27 @@ class DomainTests(TempCase):
 
 
 class StoreTests(TempCase):
+    def test_queue_order_is_persisted_per_account_and_cross_channel_move_is_rejected(self):
+        store = Store(self.root/'db.sqlite')
+        try:
+            paths = []
+            for name in ('a1', 'a2', 'b1'):
+                path = self.root/(name+'.mp4'); path.write_bytes(name.encode()); paths.append(path)
+            a1 = store.add(metadata(paths[0]), 'a')
+            a2 = store.add(metadata(paths[1]), 'a')
+            b1 = store.add(metadata(paths[2]), 'b')
+            store.reorder(a2['id'], a1['id'])
+            self.assertEqual([job['id'] for job in store.jobs() if job['account'] == 'a'],
+                             [a2['id'], a1['id']])
+            with self.assertRaisesRegex(ValueError, 'kênh khác'):
+                store.reorder(a1['id'], b1['id'])
+            store.close()
+            store = Store(self.root/'db.sqlite')
+            self.assertEqual([job['id'] for job in store.jobs() if job['account'] == 'a'],
+                             [a2['id'], a1['id']])
+        finally:
+            store.close()
+
     def test_refresh_cannot_restore_forgotten_account(self):
         store = Store(self.root/'db.sqlite')
         try:
@@ -371,6 +392,23 @@ class GoogleTests(unittest.TestCase):
 
 
 class ServerTests(TempCase):
+    def test_reorder_recalculates_inherited_schedule_in_queue_order(self):
+        self.app.store.save_account({'id':'a','channel_id':'UC_A','name':'QA','client_id':'test'},b'cipher')
+        jobs=[]
+        for name in ('first','second'):
+            path=self.root/(name+'.mp4');path.write_bytes(name.encode())
+            jobs.append(self.app.store.add(metadata(path),'a'))
+        self.app.store.save_automation('a',schedule={
+            'date':'2035-01-01','slots':'08:00, 20:00','interval':1,'offset':420,
+            'sync':False,'visibility':'schedule'})
+        self.app.apply_automation('a',jobs,include_content=False)
+        before=[self.app.store.job(job['id'])['publish_at'] for job in jobs]
+        self.app.action('/api/reorder',{
+            'id':jobs[1]['id'],'target':jobs[0]['id'],'after':False},self.base)
+        ordered=[job for job in self.app.store.jobs() if job['account']=='a']
+        self.assertEqual([job['id'] for job in ordered],[jobs[1]['id'],jobs[0]['id']])
+        self.assertEqual([job['publish_at'] for job in ordered],before)
+
     def test_reimport_migrates_paused_legacy_job_without_reset(self):
         self.app.store.save_account({'id':'a','channel_id':'UC_A','name':'QA','client_id':'test'},b'cipher')
         folder=self.root/'linked'/'clip';folder.mkdir(parents=True)
@@ -452,7 +490,67 @@ class ServerTests(TempCase):
         changed=self.app.store.job(jobs[0]['id'])
         self.assertEqual(changed['privacy'],'unlisted')
         self.assertEqual(changed['publish_at'],'')
+        self.assertFalse(changed['publishing_override'])
         self.assertEqual(self.app.store.automation('a')['schedule']['visibility'],'unlisted')
+
+    def test_video_publishing_override_has_priority_until_reset_to_channel(self):
+        jobs=self.mixed_jobs()
+        job=jobs[0]
+        self.app.action('/api/visibility',{'id':job['id'],'mode':'unlisted'},self.base)
+        direct=self.app.store.job(job['id'])
+        self.assertTrue(direct['publishing_override'])
+        self.assertEqual(direct['privacy'],'unlisted')
+        task=self.app.action('/api/schedule',{'ids':[job['id']], 'account':'a',
+            'visibility':'private','date':'2035-01-01','slots':'12:00',
+            'interval':1,'offset':0,'sync':False},self.base)
+        for _ in range(100):
+            with self.app.task_lock: result=self.app.tasks[task['task']]
+            if result['state']!='running':break
+            time.sleep(.01)
+        self.assertEqual(result['state'],'done',result)
+        self.assertEqual(result['result']['count'],0)
+        self.assertEqual(result['result']['skipped'],1)
+        self.assertEqual(self.app.store.job(job['id'])['privacy'],'unlisted')
+        self.app.action('/api/visibility',{'id':job['id'],'mode':'inherit'},self.base)
+        inherited=self.app.store.job(job['id'])
+        self.assertFalse(inherited['publishing_override'])
+        self.assertEqual(inherited['privacy'],'private')
+
+    def test_channel_rule_can_explicitly_overwrite_video_publishing_override(self):
+        jobs=self.mixed_jobs()
+        job=self.app.store.update(jobs[0]['id'],privacy='unlisted',publishing_override=True)
+        task=self.app.action('/api/schedule',{'ids':[job['id']], 'account':'a',
+            'visibility':'private','date':'2035-01-01','slots':'12:00',
+            'interval':1,'offset':0,'sync':False,'overwrite_overrides':True},self.base)
+        for _ in range(100):
+            with self.app.task_lock: result=self.app.tasks[task['task']]
+            if result['state']!='running':break
+            time.sleep(.01)
+        self.assertEqual(result['state'],'done',result)
+        changed=self.app.store.job(job['id'])
+        self.assertEqual(changed['privacy'],'private')
+        self.assertFalse(changed['publishing_override'])
+
+    def test_public_video_override_requires_explicit_confirmation(self):
+        job=self.mixed_jobs()[0]
+        with self.assertRaises(ValueError):
+            self.app.action('/api/visibility',{'id':job['id'],'mode':'public'},self.base)
+        self.app.action('/api/visibility',{
+            'id':job['id'],'mode':'public','confirmed_public':True},self.base)
+        changed=self.app.store.job(job['id'])
+        self.assertEqual(changed['privacy'],'public')
+        self.assertTrue(changed['publishing_override'])
+        self.app.store.save_automation('a',schedule={
+            'date':'2035-01-01','slots':'12:00','interval':1,'offset':0,
+            'sync':False,'visibility':'public'})
+        self.app.store.update(job['id'],privacy='private',publishing_override=True)
+        with self.assertRaises(ValueError):
+            self.app.action('/api/visibility',{'id':job['id'],'mode':'inherit'},self.base)
+        self.app.action('/api/visibility',{
+            'id':job['id'],'mode':'inherit','confirmed_public':True},self.base)
+        inherited=self.app.store.job(job['id'])
+        self.assertEqual(inherited['privacy'],'public')
+        self.assertFalse(inherited['publishing_override'])
 
     def setUp(self):
         super().setUp()

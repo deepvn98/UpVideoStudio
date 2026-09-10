@@ -113,26 +113,28 @@ class App:
         self.store.event(f'Đã nhập {added} video, bỏ qua {len(rows)-added} video trùng.')
         return {'added': added, 'duplicates': len(rows)-added, 'warnings': warnings}
 
-    def apply_automation(self, aid, jobs):
+    def apply_automation(self, aid, jobs, include_content=True, force_publishing=False):
         """Apply the latest channel defaults to every supplied unstarted draft."""
         if not jobs:
             return []
         rule = self.automation_rule(aid)
-        content = rule.get('content', {})
+        content = rule.get('content', {}) if include_content else {}
         allowed = {'made_for_kids', 'synthetic', 'category', 'language', 'playlists'}
         content = {key: value for key, value in content.items() if key in allowed}
         planned = {}
         schedule_rule = rule.get('schedule')
         visibility = schedule_rule.get('visibility', 'schedule') if schedule_rule else ''
-        if schedule_rule and visibility == 'schedule':
+        publishing_jobs = [job for job in jobs if force_publishing or not job.get('publishing_override', False)]
+        publishing_ids = {job['id'] for job in publishing_jobs}
+        if schedule_rule and visibility == 'schedule' and publishing_jobs:
             account = self.store.account(aid)
             related = {a['id'] for a in self.store.accounts()
                        if account and a['channel_id'] == account['channel_id']}
-            new_ids = {job['id'] for job in jobs}
+            new_ids = {job['id'] for job in publishing_jobs}
             occupied = [job['publish_at'] for job in self.store.jobs()
                         if (job['account'] in related or (account and job.get('channel_id') == account['channel_id']))
                         and job['id'] not in new_ids and job.get('publish_at')]
-            schedule_jobs = list(jobs)
+            schedule_jobs = list(publishing_jobs)
             if schedule_jobs:
                 times = schedule(len(schedule_jobs), schedule_rule['date'], schedule_rule['slots'],
                                  int(schedule_rule['interval']), int(schedule_rule['offset']), occupied)
@@ -140,13 +142,27 @@ class App:
         updates = []
         for job in jobs:
             changes = dict(content)
-            if job['id'] in planned:
+            if job['id'] in publishing_ids and job['id'] in planned:
                 changes.update(publish_at=planned[job['id']], privacy='private')
-            elif visibility in {'private', 'unlisted', 'public'}:
+            elif job['id'] in publishing_ids and visibility in {'private', 'unlisted', 'public'}:
                 changes.update(publish_at='', privacy=visibility)
             if changes:
                 updates.append((job['id'], changes))
         return self.store.update_many(updates) if updates else jobs
+
+    def resequence_schedule(self, aid):
+        """Keep collision-safe slots, but assign them in the user's new queue order."""
+        rule = self.automation_rule(aid).get('schedule')
+        if not rule or rule.get('visibility', 'schedule') != 'schedule':
+            return []
+        jobs = [job for job in self.store.jobs() if job['account'] == aid
+                and job['state'] == 'draft' and not job.get('session') and not job.get('video_id')
+                and not job.get('publishing_override', False)]
+        times = sorted(job['publish_at'] for job in jobs if job.get('publish_at'))
+        if len(times) != len(jobs):
+            return self.apply_automation(aid, jobs, include_content=False)
+        return self.store.update_many([(job['id'], {'publish_at': when, 'privacy': 'private'})
+                                       for job, when in zip(jobs, times)])
 
     def automation_rule(self, aid):
         """Migrate settings created before automatic folder rules were persisted."""
@@ -213,6 +229,11 @@ class App:
                 sync = body.get('sync', True)
                 if type(sync) is not bool:
                     raise ValueError('Lựa chọn đồng bộ lịch không hợp lệ.')
+                overwrite = body.get('overwrite_overrides', False)
+                if type(overwrite) is not bool:
+                    raise ValueError('Lựa chọn ghi đè thiết lập riêng không hợp lệ.')
+                if visibility == 'public' and body.get('confirmed_public') is not True:
+                    raise ValueError('Xác nhận trước khi đặt video ở chế độ công khai ngay.')
                 remote = self.google.scheduled(aid) if visibility == 'schedule' and sync else []
                 with self.mutation, self.engine.lock:
                     ids = list(dict.fromkeys(body.get('ids', [])))
@@ -223,25 +244,30 @@ class App:
                     account = self.store.account(aid)
                     if not account:
                         raise ValueError('Kết nối lại kênh trước khi xếp lịch.')
-                    jobs = [j for j in self.store.jobs() if j['account'] == aid and j['state'] == 'draft'
-                            and not j['session'] and not j['video_id']]
+                    channel_jobs = [j for j in self.store.jobs() if j['account'] == aid and j['state'] == 'draft'
+                                    and not j['session'] and not j['video_id']]
+                    jobs = [j for j in channel_jobs if overwrite or not j.get('publishing_override', False)]
                     ids = [j['id'] for j in jobs]
                     related = {a['id'] for a in self.store.accounts() if a['channel_id'] == account['channel_id']}
                     if visibility == 'schedule':
                         occupied = remote + [j['publish_at'] for j in self.store.jobs()
                                              if (j['account'] in related or j.get('channel_id') == account['channel_id'])
                                              and j['id'] not in ids and j['publish_at']]
-                        times = schedule(len(jobs), body['date'], body['slots'], int(body['interval']), int(body['offset']), occupied)
-                        self.store.update_many([(job['id'], {'publish_at': when, 'privacy': 'private'})
+                        planned = schedule(max(1, len(jobs)), body['date'], body['slots'], int(body['interval']), int(body['offset']), occupied)
+                        times = planned[:len(jobs)]
+                        self.store.update_many([(job['id'], {'publish_at': when, 'privacy': 'private',
+                                                             'publishing_override': False})
                                                 for job, when in zip(jobs, times)])
                     else:
                         times = []
-                        self.store.update_many([(job['id'], {'publish_at': '', 'privacy': visibility})
+                        self.store.update_many([(job['id'], {'publish_at': '', 'privacy': visibility,
+                                                             'publishing_override': False})
                                                 for job in jobs])
                     self.store.save_automation(aid, schedule={
                         'date': body['date'], 'slots': body['slots'], 'interval': int(body['interval']),
                         'offset': int(body['offset']), 'sync': sync, 'visibility': visibility})
-                return {'count': len(jobs), 'times': times, 'visibility': visibility}
+                return {'count': len(jobs), 'skipped': len(channel_jobs)-len(jobs),
+                        'times': times, 'visibility': visibility}
             return self.background(plan)
         with self.mutation, self.engine.lock:
             if route == '/api/unwatch':
@@ -254,6 +280,16 @@ class App:
                 result = remove_drafts(self.store, body.get('ids', []))
                 self.store.event(f'Đã chuyển {result["count"]} bản nháp sang thư mục -remove video.')
                 return result
+            if route == '/api/reorder':
+                jid, target = body.get('id', ''), body.get('target', '')
+                if not jid or not target or jid == target or type(body.get('after', False)) is not bool:
+                    raise ValueError('Vị trí sắp xếp không hợp lệ.')
+                job = self.store.job(jid)
+                self.store.reorder(jid, target, body.get('after', False))
+                drafts = [item for item in self.store.jobs() if item['account'] == job['account']
+                          and item['state'] == 'draft' and not item.get('session') and not item.get('video_id')]
+                self.resequence_schedule(job['account'])
+                return {'ok': True, 'jobs': [item['id'] for item in drafts]}
             if route == '/api/bulk':
                 jobs = [self.store.job(jid) for jid in dict.fromkeys(body.get('ids', []))]
                 jobs = [j for j in jobs if j['state'] == 'draft' and not j['session'] and not j['video_id']]
@@ -280,6 +316,38 @@ class App:
                     content.update(updates)
                     self.store.save_automation(aid, content=content)
                 return {'ok': True, 'count': len(jobs)}
+            if route == '/api/visibility':
+                job = self.store.job(body['id'])
+                if job['state'] != 'draft' or job['session'] or job['video_id']:
+                    raise ValueError('Chỉ đổi chế độ xuất bản cho video chưa bắt đầu upload.')
+                mode = body.get('mode')
+                if not isinstance(mode, str) or mode not in {'inherit', 'private', 'unlisted', 'public', 'schedule'}:
+                    raise ValueError('Chế độ xuất bản không hợp lệ.')
+                if mode == 'public' and body.get('confirmed_public') is not True:
+                    raise ValueError('Xác nhận trước khi đặt video ở chế độ công khai ngay.')
+                if mode == 'inherit':
+                    rule = self.automation_rule(job['account']).get('schedule')
+                    if rule and rule.get('visibility') == 'public' and body.get('confirmed_public') is not True:
+                        raise ValueError('Thiết lập kênh đang là Công khai ngay. Hãy xác nhận trước khi áp dụng.')
+                    if rule:
+                        self.apply_automation(job['account'], [job], include_content=False,
+                                              force_publishing=True)
+                        self.store.update(job['id'], publishing_override=False)
+                    else:
+                        self.store.update(job['id'], publish_at='', privacy='private',
+                                          publishing_override=False)
+                else:
+                    changes = {'publishing_override': True, 'state': 'draft', 'error': ''}
+                    if mode == 'schedule':
+                        when = body.get('publish_at', '')
+                        if not isinstance(when, str) or not when:
+                            raise ValueError('Chọn ngày và giờ công khai cho video.')
+                        changes.update(publish_at=when, privacy='private')
+                    else:
+                        changes.update(publish_at='', privacy=mode)
+                    validate(dict(job, **changes))
+                    self.store.update(job['id'], **changes)
+                return {'ok': True, 'job': self.store.job(job['id'])}
             if route == '/api/edit':
                 job = self.store.job(body['id'])
                 if job['state'] in BUSY or job['session'] or job['video_id']:
@@ -287,6 +355,8 @@ class App:
                 updates = {k: v for k, v in body.get('changes', {}).items() if k in EDITABLE}
                 candidate = dict(job, **updates)
                 validate(candidate)
+                if 'privacy' in updates or 'publish_at' in updates:
+                    updates['publishing_override'] = True
                 self.store.update(job['id'], **updates, state='draft', error='')
                 return {'ok': True}
             if route == '/api/start':

@@ -32,14 +32,20 @@ test('specific channel limits drafts; all channels allows bulk metadata', ()=>{
 });
 test('all-channel queue groups videos by channel and preserves order inside each group', ()=>{
   const jobs=[
-    {id:'a1',account:'a'},{id:'b1',account:'b'},
-    {id:'b2',account:'b'},{id:'a2',account:'a'}
+    {id:'a2',account:'a',queue_position:1},{id:'b1',account:'b',queue_position:0},
+    {id:'b2',account:'b',queue_position:1},{id:'a1',account:'a',queue_position:0}
   ];
   const context={state:{accounts:[{id:'a'},{id:'b'}]}};
   const helper=source.split('\n').find(line=>line.startsWith('function groupByChannel('));
   vm.runInNewContext(helper+'\nthis.grouped=groupByChannel;',context);
   assert.deepEqual(Array.from(context.grouped(jobs),job=>job.id),['a1','a2','b1','b2']);
-  assert.deepEqual(jobs.map(job=>job.id),['a1','b1','b2','a2']);
+  assert.deepEqual(jobs.map(job=>job.id),['a2','b1','b2','a1']);
+});
+test('drag and drop is persisted and rejects targets from another channel', ()=>{
+  assert.match(source,/draggable="true" data-drag=/);
+  assert.match(source,/target\.account!==queueDrag\.account/);
+  assert.match(source,/api\('\/api\/reorder'/);
+  assert.match(source,/queueInteractionActive\(\)/);
 });
 test('removal follows queue state regardless of saved video ID', ()=>{
   const h=helpers([]);
