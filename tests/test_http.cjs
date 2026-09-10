@@ -4,6 +4,9 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+const page = fs.readFileSync(path.join(__dirname, '../web/index.html'), 'utf8');
+const build = fs.readFileSync(path.join(__dirname, '../Build.cmd'), 'utf8');
+const runner = fs.readFileSync(path.join(__dirname, '../run.py'), 'utf8');
 const apiSource = source.slice(source.indexOf('async function api('), source.indexOf('\nfunction toast('));
 function client(fetch) {
   return vm.runInNewContext(apiSource + '\napi', {fetch, token:'test-token', AbortSignal});
@@ -27,4 +30,16 @@ test('valid Google connect response reaches the UI',async()=>{
 });
 test('server validation error is preserved',async()=>{
   await assert.rejects(client(async()=>({status:400,ok:false,json:async()=>({error:'Desktop app required'})}))('/api/connect',{}), /Desktop app required/);
+});
+test('in-app guide explains every step required to download the desktop OAuth JSON',()=>{
+  for(const text of ['YouTube Data API v3','Google Auth Platform','Test users','Desktop app','Download JSON','client_secret_','redirect_uri_mismatch'])assert.match(page,new RegExp(text));
+  assert.match(page,/console\.cloud\.google\.com\/auth\/overview/);
+});
+test('release build is windowless, verifiable, and still has a safe exit path',()=>{
+  assert.match(build,/--windowed/);
+  assert.doesNotMatch(build,/--console/);
+  assert.match(build,/Get-FileHash -Algorithm SHA256/);
+  assert.match(page,/id="quit-app"/);
+  assert.match(source,/api\('\/api\/shutdown'/);
+  assert.match(runner,/def report_startup_error/);
 });

@@ -35,15 +35,3 @@ def folder_windows():
             ole.CoTaskMemFree(pointer)
         if result >= 0:
             ole.CoUninitialize()
-
-
-def main():
-    import sys
-    sys.stdout.reconfigure(encoding='utf-8')
-    if sys.platform != 'win32':
-        raise ValueError('Hãy nhập đường dẫn thư mục trực tiếp trên hệ điều hành này.')
-    print(folder_windows())
-
-
-if __name__ == '__main__':
-    main()

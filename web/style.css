@@ -37,6 +37,9 @@ main{margin-left:232px;min-height:100vh;display:flex;flex-direction:column}
 .breadcrumb{color:#9297a7}
 .crumb-slash{margin:0 15px;color:#c3c5cf}
 .connection{color:#7b8497;display:flex;align-items:center;gap:7px;font-size:11px}
+.top-actions{display:flex;align-items:center;gap:18px}
+.quit-button{border:0;background:transparent;color:#9297a7;padding:7px 9px;border-radius:7px;font-size:11px}
+.quit-button:hover{background:#fff0f1;color:#b5505b}
 .page{padding:37px 40px;max-width:1700px;width:100%;margin:auto;flex:1}
 .page-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:31px}
 .eyebrow{font-size:9px;font-weight:700;letter-spacing:2px;color:#a0a2b7;margin-bottom:10px}
@@ -145,9 +148,21 @@ tr.drop-denied td{background:#fff6f4!important;cursor:not-allowed}
 .notice p{color:#8c82a1;margin-top:5px}
 .guide-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}
 .guide{background:white;border:1px solid var(--line);border-radius:12px;padding:26px}
+.guide-connect{grid-column:1/-1}
 .step{display:block;color:#b7a3f3;font-size:26px;margin-bottom:15px;font-weight:400}
 .guide p{font-size:12px;margin-top:12px;line-height:1.9}
 .guide pre{background:#f7f6fb;padding:15px;border-radius:8px;font:11px/1.7 Consolas,monospace;color:#8677ac}
+.guide-intro{max-width:760px}
+.cloud-steps{display:grid;grid-template-columns:1fr 1fr;gap:10px 28px;counter-reset:cloud;margin:20px 0 0;padding:0;list-style:none}
+.cloud-steps li{position:relative;min-width:0;padding:14px 14px 14px 48px;border:1px solid #ece9f5;border-radius:9px;background:#faf9fd;counter-increment:cloud}
+.cloud-steps li::before{content:counter(cloud);position:absolute;left:14px;top:13px;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#eee9ff;color:#7659d8;font-size:10px;font-weight:700}
+.cloud-steps li>b,.cloud-steps li>span{display:block}
+.cloud-steps li>b{color:#50556b;font-size:12px;margin-bottom:5px}
+.cloud-steps li>span{color:#858a9e;font-size:11px;line-height:1.7}
+.cloud-steps a{color:#7256da;font-weight:600}
+.cloud-steps code,.guide-note code{overflow-wrap:anywhere;color:#7156cc;font-size:10px}
+.guide-troubleshoot{display:grid;grid-template-columns:145px 1fr;gap:15px;margin-top:16px;padding:14px 16px;border-radius:9px;background:#fff8ed;color:#8b704e;font-size:11px;line-height:1.75}
+.guide-note{color:#8d83a6}
 .event{display:grid;grid-template-columns:165px 1fr;gap:20px;padding:18px 25px;border-bottom:1px solid var(--line);font-size:12px}
 .event time{color:#a5a9b6;font-size:11px}
 .event.error{color:#bf8761}
@@ -247,6 +262,7 @@ main{margin-left:76px}
 .tip .text-button{display:none}
 .page-heading{align-items:flex-start}
 .page-heading p{max-width:400px}
+.cloud-steps{grid-template-columns:1fr}
 .page-footer span{display:none}
 }
 @media(max-width:600px){.sidebar{width:60px;padding-inline:5px}
@@ -284,6 +300,7 @@ h1{font-size:23px}
 .tip p{font-size:10px}
 .page-footer{padding:0 15px 20px}
 .guide-grid{grid-template-columns:1fr}
+.guide-troubleshoot{grid-template-columns:1fr;gap:5px}
 .form-grid{grid-template-columns:1fr}
 .modal-heading{padding:20px}
 .modal-heading h2{font-size:19px}

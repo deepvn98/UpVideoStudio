@@ -1,8 +1,8 @@
-# UpVideo Studio 1.7.0
+# UpVideo Studio 1.8.0
 
 Ứng dụng Windows cục bộ để quản lý nội dung, playlist, lịch xuất bản và tiến trình tải video lên nhiều kênh YouTube.
 
-## Thao tác trên nhiều trạng thái
+## Xóa video an toàn ở mọi trạng thái
 
 Chọn ít nhất một bản nháp rồi bấm **Khai báo nội dung**: thiết lập được lưu theo kênh và áp dụng cho toàn bộ bản nháp chưa bắt đầu của kênh đó. **Xếp lịch** yêu cầu một kênh cụ thể, lưu quy tắc cho kênh và chỉ cập nhật những video đang chọn **Theo thiết lập kênh**. Video có thiết lập xuất bản riêng chỉ bị thay đổi khi người dùng chủ động tick **Ghi đè**. Khi mở lại chương trình, hai hộp thoại hiển thị đúng thiết lập được lưu gần nhất của kênh đang chọn. Video lỗi, tạm dừng, đang chạy và đã tải lên được giữ nguyên.
 
@@ -10,15 +10,15 @@ Khi bộ lọc **Kênh** chọn một kênh cụ thể, **Khai báo nội dung**
 
 Khi chọn **Tất cả các kênh**, hàng đợi tự nhóm video theo thứ tự kênh trong danh sách tài khoản. Kéo biểu tượng chấm ở đầu mỗi video để đổi vị trí trong cùng kênh; chương trình chặn thả sang kênh khác. Thứ tự được lưu trên máy, quyết định thứ tự upload và tính lại giờ đăng cho các bản nháp đang dùng lịch mặc định của kênh. Lịch đặt riêng và lịch của video đã bắt đầu tải không bị ghi đè.
 
-**Xóa bản nháp** nhận bốn trạng thái **Bản nháp**, **Cần xử lý**, **Tạm dừng**, **Cần hoàn thiện**, kể cả khi đã có phiên upload hoặc video ID. Bốn trạng thái **Đã tải lên**, **Chờ tải lên**, **Đang tải lên**, **Hoàn thiện** bị chặn. Thư mục vẫn được chuyển sang `-remove video`; mục bị bỏ khỏi hàng đợi. Thao tác này không xóa video hoặc hủy lịch trên YouTube.
+Người dùng có thể yêu cầu **Xóa video** ở mọi trạng thái. Với **Chờ tải lên**, **Đang tải lên** hoặc **Hoàn thiện**, chương trình yêu cầu dừng, chờ worker nhả file rồi mới chuyển thư mục sang `-remove video` và bỏ mục khỏi hàng đợi. Video đã có trên YouTube không bị xóa hoặc hủy lịch trên YouTube.
 
-## Xóa bản nháp bằng cách chuyển thư mục
+## Xóa video bằng cách chuyển thư mục
 
-Chọn bản nháp → **Xóa bản nháp** → kiểm tra đường dẫn nguồn và đích → **Chuyển thư mục và xóa bản nháp**.
+Chọn video → **Xóa video** → kiểm tra đường dẫn nguồn và đích → xác nhận dừng tác vụ nếu video đang chạy.
 
-Ví dụ liên kết `D:\KenhA`: khi xóa video trong `D:\KenhA\Video01`, toàn bộ thư mục `Video01` được chuyển sang `D:\KenhA-remove video\Video01`. Video, ảnh, nội dung và các file khác trong thư mục đều được giữ; bản nháp bị bỏ khỏi hàng đợi. Bộ theo dõi `KenhA` không quét lại video này. Nếu tên thư mục đích đã tồn tại, chương trình thêm `(2)`, `(3)`… thay vì ghi đè.
+Ví dụ liên kết `D:\KenhA`: khi xóa video trong `D:\KenhA\Video01`, toàn bộ thư mục `Video01` được chuyển sang `D:\KenhA-remove video\Video01`. Video, ảnh, nội dung và các file khác trong thư mục đều được giữ; video bị bỏ khỏi hàng đợi. Bộ theo dõi `KenhA` không quét lại video này. Nếu tên thư mục đích đã tồn tại, chương trình thêm `(2)`, `(3)`… thay vì ghi đè.
 
-Mỗi video nên nằm trong thư mục con riêng. Nếu nhiều video chung thư mục, phải chọn tất cả và không được có công việc khác đang sử dụng file trong thư mục đó. Video nằm trực tiếp tại thư mục gốc cần được sắp xếp vào thư mục con trước; chương trình không chuyển cả thư mục gốc. Quyền chuyển được kiểm tra theo bốn trạng thái cho phép ở trên.
+Mỗi video nên nằm trong thư mục con riêng. Nếu nhiều video chung thư mục, phải chọn tất cả và không được có công việc khác đang sử dụng file trong thư mục đó. Video nằm trực tiếp tại thư mục gốc cần được sắp xếp vào thư mục con trước; chương trình không chuyển cả thư mục gốc.
 
 ## Tự đồng bộ thư mục với kênh
 
@@ -32,7 +32,7 @@ Khi ứng dụng chạy, thư mục và các thư mục con được kiểm tra 
 - Mục đã bắt đầu upload, đang chờ chạy hoặc đã đăng không được tự sửa/xóa. Thư mục mất kết nối hoặc lỗi đọc không làm xóa bản nháp.
 - Mỗi kênh liên kết một thư mục. Chọn thư mục khác sẽ thay liên kết; bản nháp ở thư mục cũ vẫn được giữ. Liên kết được lưu khi đóng ứng dụng, và kiểm tra lại sau khi mở.
 
-Mở lại **Thêm video** và chọn kênh để xem đường dẫn đang theo dõi hoặc bấm **Dừng theo dõi thư mục hiện tại**. Bỏ tick chỉ nhập một lần, không hủy liên kết đang có. Thao tác **Xóa bản nháp** chuyển thư mục con sang thư mục lưu riêng như mô tả ở trên, nên file không còn nằm trong phạm vi theo dõi.
+Mở lại **Thêm video** và chọn kênh để xem đường dẫn đang theo dõi hoặc bấm **Dừng theo dõi thư mục hiện tại**. Bỏ tick chỉ nhập một lần, không hủy liên kết đang có. Thao tác **Xóa video** chuyển thư mục con sang thư mục lưu riêng như mô tả ở trên, nên file không còn nằm trong phạm vi theo dõi.
 
 Ứng dụng Python mới để chuẩn bị, xếp lịch và tải video lên YouTube. Giao diện tiếng Việt chạy trong trình duyệt trên máy, không cần Node.js hoặc cài thư viện Python bên ngoài để sử dụng. Hỗ trợ kết nối Google trên Windows 10/11 bằng mã hóa DPAPI.
 
@@ -47,7 +47,7 @@ cd UpVideoStudio
 python run.py
 ```
 
-Trình duyệt tự mở. Ứng dụng chỉ lắng nghe tại `127.0.0.1`, ưu tiên cổng `8765` và chọn cổng trống khác nếu cổng này bận. Mở chương trình lần thứ hai sẽ mở lại tab của phiên đang chạy. Giữ cửa sổ chương trình chạy khi đang upload. Đóng tab trình duyệt không dừng upload; đóng cửa sổ Python/EXE sẽ ngắt kết nối giao diện. Nhấn Ctrl+C trong cửa sổ chương trình để dừng và lưu phiên; một yêu cầu mạng đang chạy có thể cần tối đa khoảng 45 giây để kết thúc.
+Trình duyệt tự mở. Bản phát hành không hiện cửa sổ terminal và chỉ lắng nghe tại `127.0.0.1`, ưu tiên cổng `8765`, sau đó chọn cổng trống khác nếu cổng này bận. Mở chương trình lần thứ hai sẽ mở lại tab của phiên đang chạy. Đóng tab không dừng tiến trình nền; dùng nút **Thoát** ở góc trên bên phải để dừng an toàn và lưu tiến trình upload. Khi chạy từ mã nguồn trong terminal, vẫn có thể nhấn Ctrl+C.
 
 Nếu thấy mất kết nối hoặc `Failed to fetch`: mở lại `Start.cmd`/EXE và dùng tab vừa mở, không dùng địa chỉ cổng cũ. Nếu vừa khởi động lại ứng dụng tại cùng địa chỉ, tải lại trang để nhận phiên giao diện mới. Ứng dụng hiển thị hướng dẫn mất kết nối và không tự gửi lại thao tác tải lên.
 
@@ -164,11 +164,11 @@ Node chỉ cần cho kiểm tra JavaScript, không cần để chạy ứng dụ
 Đóng gói Windows (PyInstaller là dependency dành cho bước build):
 
 ```powershell
-python -m pip install pyinstaller
+python -m pip install -r requirements-build.txt
 .\Build.cmd
 ```
 
-EXE được tạo trong `dist/UpVideoStudio/`. Phân phối toàn bộ thư mục này. Bản build chưa ký số.
+EXE được tạo trong `dist/UpVideoStudio/`. `Build.cmd` đóng gói bằng chế độ `--windowed`, tạo `UpVideoStudio-Windows.zip` cùng `UpVideoStudio-Windows.sha256.txt`. Phân phối toàn bộ ZIP và giữ thư mục `_internal` cạnh EXE sau khi giải nén. Bản build chưa ký số nên Windows SmartScreen vẫn có thể cảnh báo.
 
 ## Trạng thái kiểm chứng
 

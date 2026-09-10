@@ -392,6 +392,40 @@ class GoogleTests(unittest.TestCase):
 
 
 class ServerTests(TempCase):
+    def test_shutdown_requires_confirmation_and_pauses_busy_jobs(self):
+        self.app.store.save_account({'id':'a','channel_id':'UC_A','name':'QA','client_id':'test'},b'cipher')
+        path=self.root/'shutdown.mp4';path.write_bytes(b'video')
+        job=self.app.store.add(metadata(path),'a')
+        self.app.store.update(job['id'],state='queued')
+        with self.assertRaisesRegex(ValueError,'xác nhận'):
+            self.app.action('/api/shutdown',{},self.base)
+        def stop(ids):
+            for jid in ids:self.app.store.update(jid,state='paused')
+        with patch.object(self.app.engine,'pause',side_effect=stop) as pause:
+            result=self.app.action('/api/shutdown',{'confirmed':True},self.base)
+        pause.assert_called_once_with([job['id']])
+        self.assertEqual(result['paused'],1)
+
+    def test_busy_video_delete_waits_for_pause_then_removes_queue_item(self):
+        self.app.store.save_account({'id':'a','channel_id':'UC_A','name':'QA','client_id':'test'},b'cipher')
+        root=self.root/'linked';folder=root/'clip';folder.mkdir(parents=True)
+        path=folder/'busy.mp4';path.write_bytes(b'video')
+        job=self.app.store.add(dict(metadata(path),import_root=str(root)),'a')
+        self.app.store.update(job['id'],state='queued')
+        preview=self.app.action('/api/remove-preview',{'ids':[job['id']]},self.base)
+        self.assertEqual(len(preview['moved']),1)
+        def pause(ids):
+            for jid in ids:self.app.store.update(jid,state='paused')
+        with patch.object(self.app.engine,'pause',side_effect=pause):
+            task=self.app.action('/api/remove',{'ids':[job['id']]},self.base)
+            for _ in range(100):
+                with self.app.task_lock: result=self.app.tasks[task['task']]
+                if result['state']!='running':break
+                time.sleep(.01)
+        self.assertEqual(result['state'],'done',result)
+        self.assertEqual(self.app.store.jobs(),[])
+        self.assertTrue(Path(preview['moved'][0]['destination']).is_dir())
+
     def test_reorder_recalculates_inherited_schedule_in_queue_order(self):
         self.app.store.save_account({'id':'a','channel_id':'UC_A','name':'QA','client_id':'test'},b'cipher')
         jobs=[]
@@ -630,7 +664,7 @@ class ServerTests(TempCase):
         self.app.store.save_account({'id':'b','channel_id':'UC_A','name':'QA','client_id':'other'},b'cipher')
         self.assertEqual(self.app.import_folder({'account':'b','path':str(self.root)})['added'],0)
 
-    def test_remove_only_unstarted_jobs_and_preserve_file(self):
+    def test_remove_archives_unstarted_and_completed_jobs(self):
         folder=self.root/'linked'/'clip';folder.mkdir(parents=True)
         p=folder/'a.mp4';p.write_bytes(b'video')
         job=self.app.store.add(dict(metadata(p),import_root=str(folder.parent)),'a')
@@ -638,8 +672,10 @@ class ServerTests(TempCase):
         self.assertFalse(p.exists());self.assertEqual(self.app.store.jobs(),[])
         moved=self.root/'linked-remove video'/'clip'/'a.mp4'
         self.assertEqual(moved.read_bytes(),b'video')
-        job=self.app.store.add(metadata(moved),'a');self.app.store.update(job['id'],state='queued',session='saved')
-        with self.assertRaises(ValueError):self.app.action('/api/remove',{'ids':[job['id']]},self.base)
+        job=self.app.store.add(metadata(moved),'a');self.app.store.update(job['id'],state='completed',video_id='youtube-id')
+        self.app.action('/api/remove',{'ids':[job['id']]},self.base)
+        self.assertEqual(self.app.store.jobs(),[])
+        self.assertFalse(moved.exists())
 
 
 if __name__=='__main__':unittest.main()

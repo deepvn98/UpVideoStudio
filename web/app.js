@@ -15,8 +15,7 @@ const editable = j => !active(j) && !j.has_session && !j.video_id;
 const selectedFrom = jobs => jobs.filter(j => state.selected.has(j.id));
 const visibleSelection = () => selectedFrom(visible());
 const draftSelection = () => visibleSelection().filter(j=>j.state==='draft' && editable(j) && (!state.channel || j.account===state.channel));
-const removable = j => ['draft','error','paused','warning'].includes(j.state);
-let refreshing = false, modalGeneration = 0, queueDrag = null;
+let refreshing = false, modalGeneration = 0, queueDrag = null, shuttingDown = false;
 
 // UI preferences only: never store credentials, form drafts or upload commands.
 const UI_STORAGE_KEY = 'upvideo.ui.v1';
@@ -125,7 +124,7 @@ function renderChannels(){
 }
 function publishingEditorActive(){return document.activeElement?.matches?.('#jobs select[data-publishing]')||false;}
 function queueInteractionActive(){return publishingEditorActive()||queueDrag!==null;}
-async function refresh(){if(refreshing)return;refreshing=true;try{const data=await api('/api/state');Object.assign(state,data);state.selected=new Set([...state.selected].filter(id=>state.jobs.some(j=>j.id===id)));if(state.channel&&!state.accounts.some(a=>a.id===state.channel))state.channel='';$('#connection').innerHTML='<i></i> Đã kết nối';$('#offline-notice').hidden=true;if(!queueInteractionActive())render();}catch(e){$('#connection').textContent='Mất kết nối · mở lại ứng dụng';$('#offline-notice').hidden=false;$('#offline-message').textContent=e.message;}finally{refreshing=false;}}
+async function refresh(){if(refreshing||shuttingDown)return;refreshing=true;try{const data=await api('/api/state');Object.assign(state,data);state.selected=new Set([...state.selected].filter(id=>state.jobs.some(j=>j.id===id)));if(state.channel&&!state.accounts.some(a=>a.id===state.channel))state.channel='';$('#connection').innerHTML='<i></i> Đã kết nối';$('#offline-notice').hidden=true;if(!queueInteractionActive())render();}catch(e){$('#connection').textContent='Mất kết nối · mở lại ứng dụng';$('#offline-notice').hidden=false;$('#offline-message').textContent=e.message;}finally{refreshing=false;}}
 
 function connect(){
   modal('Kết nối kênh YouTube',`<p class="helper">Chọn file OAuth Client JSON loại Desktop app. File được xử lý trên máy; trình duyệt chỉ mở trang đăng nhập chính thức của Google.</p><label class="upload-file">◇ Chọn thông tin ứng dụng Google<input type="file" id="client-file" accept=".json,application/json"></label><div class="info-box">Chọn đúng kênh hoặc Brand Account trong bước đăng nhập Google. Tên và ID kênh sẽ xuất hiện sau khi kết nối thành công.</div><p class="helper">Ứng dụng cần quyền quản lý YouTube để tải video và thêm vào playlist. Project chưa audit có thể bị giới hạn video riêng tư.</p><div class="modal-footer"><button class="button primary" id="connect-google">Tiếp tục với Google ↗</button></div>`);
@@ -295,16 +294,16 @@ $('#modal-close').onclick=closeModal;$('#modal').addEventListener('cancel',()=>m
 $('#bulk-open').onclick=bulk;$('#schedule-open').onclick=plan;$('#start-selected').onclick=()=>startReview(visibleSelection());
 $('#remove-selected').onclick=async()=>{
   const jobs=visibleSelection();if(!jobs.length)return;
-  if(jobs.some(j=>!removable(j))){toast('Không xóa video đang chờ tải lên, đang tải lên, hoàn thiện hoặc đã tải lên.',true);return;}
   const ids=jobs.map(j=>j.id);
   try{
     const preview=await api('/api/remove-preview',{ids});
-    modal('Xóa '+jobs.length+' bản nháp?',`<p class="helper">Toàn bộ thư mục chứa video, ảnh và nội dung sẽ được chuyển ra ngoài thư mục liên kết. File không bị xóa vĩnh viễn; bản nháp sẽ biến mất khỏi hàng đợi và không được tự quét lại từ thư mục cũ.</p><div class="review-list">${preview.moved.map(p=>`<div class="review-item" style="overflow-wrap:anywhere"><strong>Từ:</strong> ${esc(p.source)}<br><strong>Đến:</strong> ${esc(p.destination)}</div>`).join('')}</div><div class="modal-footer"><button class="button danger" id="confirm-remove">Chuyển thư mục và xóa bản nháp</button></div>`);
-    const notice=document.createElement('p');notice.className='helper';notice.textContent='Thao t\u00e1c n\u00e0y kh\u00f4ng x\u00f3a video ho\u1eb7c h\u1ee7y l\u1ecbch tr\u00ean YouTube.';$('#modal-body').prepend(notice);
-    $('#confirm-remove').onclick=async()=>{const button=$('#confirm-remove');button.disabled=true;try{await api('/api/remove',{ids});jobs.forEach(j=>state.selected.delete(j.id));saveUI();closeModal();await refresh();toast('Đã chuyển thư mục và xóa bản nháp.');}catch(e){errorInModal(e);button.disabled=false;}};
+    const busy=jobs.filter(active).length;const uploaded=jobs.filter(job=>job.video_id||job.state==='done').length;
+    modal('Xóa '+jobs.length+' video?',`<div class="info-box">${busy?`Chương trình sẽ dừng an toàn ${busy} tác vụ đang chạy rồi mới xóa.<br>`:''}${uploaded?`${uploaded} video đã có dữ liệu trên YouTube sẽ <b>không bị xóa khỏi YouTube</b>.<br>`:''}Thư mục nguồn còn tồn tại sẽ được chuyển ra ngoài thư mục liên kết và không bị tự quét lại.</div><div class="review-list">${preview.moved.map(p=>p.missing?`<div class="review-item" style="overflow-wrap:anywhere"><strong>File nguồn không còn:</strong> ${esc(p.source)}<br>Chỉ xóa mục khỏi hàng đợi.</div>`:`<div class="review-item" style="overflow-wrap:anywhere"><strong>Từ:</strong> ${esc(p.source)}<br><strong>Đến:</strong> ${esc(p.destination)}</div>`).join('')}</div><div class="modal-footer"><button class="button danger" id="confirm-remove">${busy?'Dừng tác vụ và xóa':'Xóa video'}</button></div>`);
+    $('#confirm-remove').onclick=async()=>{const button=$('#confirm-remove');button.disabled=true;try{await task('/api/remove',{ids},busy?'Đang dừng tác vụ an toàn…':'Đang chuyển video…');jobs.forEach(j=>state.selected.delete(j.id));saveUI();closeModal();await refresh();toast('Đã chuyển thư mục và xóa video khỏi hàng đợi.');}catch(e){errorInModal(e);button.disabled=false;}};
   }catch(e){toast(e.message,true);}
 };
 $('#pause-all').onclick=async()=>{try{await api('/api/pause',{ids:state.jobs.filter(active).map(j=>j.id)});toast('Đang lưu và tạm dừng các lượt tải lên…');await refresh();}catch(e){toast(e.message,true);}};
+$('#quit-app').onclick=()=>{const running=state.jobs.filter(active).length;modal('Thoát UpVideo Studio?',`<div class="info-box">${running?`Chương trình sẽ yêu cầu tạm dừng an toàn ${running} tác vụ đang chạy. Tiến trình upload được giữ để tiếp tục lần sau.`:'Mọi dữ liệu trong hàng đợi đã được lưu trên máy.'}</div><p class="helper">Sau khi thoát, tab trình duyệt này có thể được đóng.</p><div class="modal-footer"><button class="button" id="cancel-quit">Ở lại</button><button class="button danger" id="confirm-quit">Thoát chương trình</button></div>`);$('#cancel-quit').onclick=closeModal;$('#confirm-quit').onclick=async()=>{const button=$('#confirm-quit');button.disabled=true;try{await api('/api/shutdown',{confirmed:true});shuttingDown=true;modal('Đã thoát chương trình',`<div class="info-box">Dữ liệu đã được lưu và máy chủ cục bộ đang dừng. Bạn có thể đóng tab này.</div>`);$('#connection').textContent='Đã đóng';}catch(error){errorInModal(error);button.disabled=false;}};};
 $('#download-template').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['Title:\nTên video của bạn\n\nVideo Description:\nMô tả video\n\nTags:\ntừ khóa 1, từ khóa 2'],{type:'text/plain;charset=utf-8'}));a.download='info.txt';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
 window.addEventListener('storage',event=>{if(event.key===UI_STORAGE_KEY)restoreUI(event.newValue);});
 window.addEventListener('focus',()=>{readUI();refresh();});

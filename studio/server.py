@@ -3,9 +3,8 @@ import json
 import math
 import re
 import secrets
-import subprocess
-import sys
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,7 +17,7 @@ from .address import UI_HOST, ui_url
 from .catalog import CATEGORIES, LANGUAGES, validate_choices
 from . import __version__
 from .watcher import FolderWatcher, SOURCE_FIELDS
-from .removal import plan_removal, remove_drafts
+from .removal import BUSY_STATES, plan_removal, remove_jobs
 
 EDITABLE = {'title', 'description', 'tags', 'thumbnail', 'category', 'language', 'privacy',
             'publish_at', 'made_for_kids', 'synthetic', 'playlists'}
@@ -208,18 +207,40 @@ class App:
             return self.background(import_and_watch)
         if route == '/api/pick':
             def pick():
-                flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-                command = [sys.executable, '--pick-folder'] if getattr(sys, 'frozen', False) else [sys.executable, '-m', 'studio.picker']
-                result = subprocess.run(command, capture_output=True, encoding='utf-8', timeout=180,
-                                        creationflags=flags, cwd=str(self.web_dir.parent))
-                if result.returncode:
-                    raise ValueError('Không mở được cửa sổ chọn thư mục. Hãy dán đường dẫn thư mục.')
-                return {'path': result.stdout.strip()}
+                from .picker import folder_windows
+                return {'path': folder_windows()}
             return self.background(pick)
         if route == '/api/connect':
             return {'url': self.google.begin(body.get('config', {}), base + '/oauth/callback')}
         if route == '/api/playlists':
             return self.background(lambda: self.google.playlists(body['account']))
+        if route == '/api/shutdown':
+            if body.get('confirmed') is not True:
+                raise ValueError('Cần xác nhận trước khi thoát chương trình.')
+            with self.engine.lock:
+                running = [job['id'] for job in self.store.jobs() if job['state'] in BUSY]
+                if running:
+                    self.engine.pause(running)
+            self.store.event('Người dùng đã yêu cầu thoát chương trình.')
+            return {'ok': True, 'paused': len(running)}
+        if route == '/api/remove':
+            ids = list(dict.fromkeys(body.get('ids', [])))
+            jobs = [self.store.job(jid) for jid in ids]
+            if any(job['state'] in BUSY_STATES for job in jobs):
+                def stop_and_remove():
+                    with self.mutation, self.engine.lock:
+                        plan_removal(self.store, ids, allow_busy=True)
+                        self.engine.pause(ids)
+                    deadline = time.monotonic() + 180
+                    while any(self.store.job(jid)['state'] in BUSY_STATES for jid in ids):
+                        if time.monotonic() >= deadline:
+                            raise ValueError('Chưa dừng được tác vụ sau 3 phút. Hãy thử xóa lại khi trạng thái đã chuyển sang Tạm dừng.')
+                        time.sleep(.1)
+                    with self.mutation, self.engine.lock:
+                        result = remove_jobs(self.store, ids)
+                        self.store.event(f'Đã dừng và chuyển {result["count"]} video sang thư mục -remove video.')
+                        return result
+                return self.background(stop_and_remove)
         if route == '/api/schedule':
             def plan():
                 aid = body['account']
@@ -274,11 +295,11 @@ class App:
                 self.store.watch(body['account'], '')
                 return {'ok': True}
             if route == '/api/remove-preview':
-                _, plans = plan_removal(self.store, body.get('ids', []))
+                _, plans = plan_removal(self.store, body.get('ids', []), allow_busy=True)
                 return {'moved': plans}
             if route == '/api/remove':
-                result = remove_drafts(self.store, body.get('ids', []))
-                self.store.event(f'Đã chuyển {result["count"]} bản nháp sang thư mục -remove video.')
+                result = remove_jobs(self.store, body.get('ids', []))
+                self.store.event(f'Đã chuyển {result["count"]} video sang thư mục -remove video.')
                 return result
             if route == '/api/reorder':
                 jid, target = body.get('id', ''), body.get('target', '')
@@ -468,6 +489,8 @@ def make_server(app, port=0):
                     raise ValueError('Dữ liệu yêu cầu không hợp lệ.')
                 result = app.action(self.path, body, 'http://127.0.0.1:' + str(self.server.server_port))
                 self.send(200, result)
+                if self.path == '/api/shutdown':
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
             except Exception as exc:
                 message = str(exc) if isinstance(exc, (ValueError, ApiError)) else 'Không thực hiện được thao tác. Kiểm tra dữ liệu và thử lại.'
                 self.send(400, {'error': message})

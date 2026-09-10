@@ -16,17 +16,26 @@ def check_plain_path(path):
             raise ValueError('Không di chuyển thư mục qua liên kết/junction: ' + str(part))
 
 
-def plan_removal(store, ids):
+BUSY_STATES = {'queued', 'uploading', 'finishing'}
+
+
+def plan_removal(store, ids, allow_busy=False):
     jobs = [store.job(jid) for jid in dict.fromkeys(ids)]
-    if not jobs or any(j['state'] not in ('draft', 'error', 'paused', 'warning') for j in jobs):
-        raise ValueError('Không xóa video đang chờ tải lên, đang tải lên, hoàn thiện hoặc đã tải lên.')
+    if not jobs:
+        raise ValueError('Chọn ít nhất một video để xóa.')
+    if not allow_busy and any(j['state'] in BUSY_STATES for j in jobs):
+        raise ValueError('Video vẫn đang chạy. Hãy chờ chương trình dừng tác vụ trước khi xóa.')
     watches = store.watches()
     all_jobs = store.jobs()
     groups = {}
+    missing = []
     for job in jobs:
         path = Path(job['path']).absolute()
         check_plain_path(path)
         path = path.resolve()
+        if not path.is_file():
+            missing.append(job)
+            continue
         roots = [Path(w['path']).resolve() for w in watches if w['account'] == job['account'] and inside(path, Path(w['path']).resolve())]
         saved = job.get('watch_root') or job.get('import_root')
         if saved and inside(path, Path(saved).resolve()):
@@ -46,7 +55,7 @@ def plan_removal(store, ids):
         source = path.parent
         if inside(root, source) or any(inside(Path(w['path']).resolve(), source) for w in watches):
             raise ValueError('Video nằm trực tiếp trong thư mục gốc. Hãy đặt mỗi video cùng nội dung và ảnh vào một thư mục con trước khi xóa.')
-        if not path.is_file() or not source.is_dir():
+        if not source.is_dir():
             raise ValueError('Không tìm thấy thư mục video để chuyển: ' + str(source))
         archive = root.with_name(root.name + '-remove video')
         check_plain_path(archive)
@@ -58,7 +67,8 @@ def plan_removal(store, ids):
         raise ValueError('Các thư mục được chọn lồng nhau. Hãy xử lý riêng từng thư mục.')
     selected_paths = {Path(j['path']).resolve() for j in jobs}
     selected_ids = {j['id'] for j in jobs}
-    plans = []
+    plans = [{'source': str(Path(job['path']).absolute().parent), 'destination': '', 'missing': True}
+             for job in missing]
     reserved = set()
     for source, archive in groups.items():
         check_plain_path(source)
@@ -85,11 +95,13 @@ def plan_removal(store, ids):
     return jobs, plans
 
 
-def remove_drafts(store, ids):
+def remove_jobs(store, ids):
     jobs, plans = plan_removal(store, ids)
     moved = []
     try:
         for plan in plans:
+            if plan.get('missing'):
+                continue
             source, destination = Path(plan['source']), Path(plan['destination'])
             check_plain_path(source)
             check_plain_path(destination)
@@ -110,5 +122,5 @@ def remove_drafts(store, ids):
                 failures.append(str(destination))
         if failures:
             raise ValueError('Không hoàn tất thao tác; file đã chuyển được giữ tại: ' + '; '.join(failures)) from exc
-        raise ValueError('Chưa xóa bản nháp; không chuyển được thư mục. Đóng file đang mở và kiểm tra quyền truy cập. ' + str(exc)) from exc
+        raise ValueError('Chưa xóa video; không chuyển được thư mục. Đóng file đang mở và kiểm tra quyền truy cập. ' + str(exc)) from exc
     return {'ok': True, 'moved': plans, 'count': len(jobs)}

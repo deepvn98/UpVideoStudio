@@ -1,11 +1,15 @@
 __pycache__/
 *.pyc
 .venv/
+.build-python/
+.build-tools/
 data/
 *.db*
 *.lock
 dist/
 build/
 *.spec
+UpVideoStudio-Windows.zip
+UpVideoStudio-Windows.sha256.txt
 client_secret*.json
 firebase_key.json

@@ -6,9 +6,9 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
 function helpers(jobs, channel='') {
   const context = {state:{jobs, channel, selected:new Set(jobs.map(j=>j.id))},visible:()=>jobs};
-  const names = ['active','editable','selectedFrom','visibleSelection','draftSelection','removable'];
+  const names = ['active','editable','selectedFrom','visibleSelection','draftSelection'];
   vm.runInNewContext(names.map(name=>source.split('\n').find(line=>line.startsWith('const '+name+' ='))).join('\n')+
-    '\nthis.drafts = draftSelection; this.visibleSelected = visibleSelection; this.canRemove = removable;', context);
+    '\nthis.drafts = draftSelection; this.visibleSelected = visibleSelection;', context);
   return context;
 }
 test('selection count is scoped to rows currently visible', ()=>{
@@ -47,10 +47,8 @@ test('drag and drop is persisted and rejects targets from another channel', ()=>
   assert.match(source,/api\('\/api\/reorder'/);
   assert.match(source,/queueInteractionActive\(\)/);
 });
-test('removal follows queue state regardless of saved video ID', ()=>{
-  const h=helpers([]);
-  for(const state of ['paused','error']) assert.equal(h.canRemove({state,has_session:true,video_id:''}),true);
-  for(const state of ['draft','paused','error','warning']) assert.equal(h.canRemove({state,video_id:'uploaded'}),true);
-  for(const state of ['done','queued','uploading','finishing']) assert.equal(h.canRemove({state,video_id:''}),false);
-  assert.equal(h.canRemove({state:'uploading'}),false);
+test('removal accepts every selected status and waits through the task API', ()=>{
+  assert.doesNotMatch(source,/const removable/);
+  assert.match(source,/task\('\/api\/remove'/);
+  assert.match(source,/Đang dừng tác vụ an toàn/);
 });

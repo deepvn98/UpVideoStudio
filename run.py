@@ -4,10 +4,42 @@ import json
 import os
 import sys
 import threading
+import traceback
 import webbrowser
 import urllib.request
 from pathlib import Path
 from studio.address import ui_url
+
+
+def console(message):
+    """Windowed PyInstaller builds have no stdout; source runs still get diagnostics."""
+    stream = getattr(sys, 'stdout', None)
+    if stream is not None:
+        print(message, file=stream, flush=True)
+
+
+def message_box(message, title='UpVideo Studio'):
+    if os.name == 'nt':
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)
+            return
+        except (AttributeError, OSError):
+            pass
+    console(f'{title}: {message}')
+
+
+def report_startup_error(exc):
+    """Never fail silently in the no-console release build."""
+    data = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'UpVideoStudio'
+    try:
+        data.mkdir(parents=True, exist_ok=True)
+        log = data / 'startup-error.log'
+        log.write_text(traceback.format_exc(), encoding='utf-8')
+        detail = f'\n\nChi tiết đã được lưu tại:\n{log}'
+    except OSError:
+        detail = ''
+    message_box('Không thể khởi động chương trình.' + detail + '\n\nLỗi: ' + str(exc))
 
 
 def existing_url(data):
@@ -27,9 +59,6 @@ def existing_url(data):
 
 
 def main():
-    if '--pick-folder' in sys.argv:
-        from studio.picker import main as pick
-        return pick()
     parser = argparse.ArgumentParser(description='UpVideo Studio')
     parser.add_argument('--port', type=int, default=None)
     parser.add_argument('--no-browser', action='store_true')
@@ -56,12 +85,12 @@ def main():
     except OSError:
         url = existing_url(data)
         if url:
-            print(f'UpVideo Studio is already running: {url}', flush=True)
+            console(f'UpVideo Studio is already running: {url}')
             if not args.no_browser:
                 webbrowser.open(url)
             lock.close()
             return 0
-        print('UpVideo Studio is already starting. Use its browser tab or retry in a few seconds.')
+        message_box('Chương trình đang khởi động hoặc đã chạy nền. Hãy dùng tab trình duyệt hiện có hoặc thử lại sau vài giây.')
         lock.close()
         return 1
     app = App(data, root / 'web')
@@ -75,15 +104,15 @@ def main():
         server = make_server(app, 0)
     (data / 'instance.json').write_text(json.dumps({'port': server.server_port}), encoding='utf-8')
     url = ui_url(server.server_port)
-    print(f'UpVideo Studio: {url}', flush=True)
-    print('Press Ctrl+C to stop. Upload sessions are saved automatically.', flush=True)
-    print('Keep this window open. Closing it disconnects the browser interface.', flush=True)
+    console(f'UpVideo Studio: {url}')
+    console('Press Ctrl+C to stop. Upload sessions are saved automatically.')
+    console('Keep this window open. Closing it disconnects the browser interface.')
     if not args.no_browser:
         threading.Timer(.5, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever(poll_interval=.25)
     except KeyboardInterrupt:
-        print('\nSaving upload progress…', flush=True)
+        console('Saving upload progress…')
     finally:
         server.server_close()
         app.close()
@@ -92,4 +121,8 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as error:
+        report_startup_error(error)
+        sys.exit(1)

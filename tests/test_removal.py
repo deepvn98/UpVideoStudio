@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from studio.domain import scan_folder
-from studio.removal import plan_removal, remove_drafts
+from studio.removal import plan_removal, remove_jobs
 from studio.server import App
 
 
@@ -15,7 +15,7 @@ class RemovalTests(unittest.TestCase):
         row=scan_folder(str(folder))[0][0]
         job=self.store.add(row,'a')
         self.store.update(job['id'],state='paused',session='saved')
-        result=remove_drafts(self.store,[job['id']])
+        result=remove_jobs(self.store,[job['id']])
         self.assertEqual(Path(result['moved'][0]['destination']),self.root/'Channel-remove video'/'OldVideo')
         self.assertFalse(folder.exists())
 
@@ -23,7 +23,7 @@ class RemovalTests(unittest.TestCase):
         job=self.add()
         self.store.update(job['id'],watch_root='',state='paused',session='saved')
         self.store.watch('a','')
-        result=remove_drafts(self.store,[job['id']])
+        result=remove_jobs(self.store,[job['id']])
         self.assertEqual(Path(result['moved'][0]['destination']),self.root/'Channel-remove video'/'clip')
 
     def test_legacy_job_uses_known_root_of_same_account(self):
@@ -38,23 +38,31 @@ class RemovalTests(unittest.TestCase):
         for state in ('error', 'paused'):
             job = self.add(folder=state, content=state.encode())
             self.store.update(job['id'], state=state, session='saved-upload-session')
-            remove_drafts(self.store,[job['id']])
+            remove_jobs(self.store,[job['id']])
             self.assertFalse(Path(job['path']).exists())
         self.assertEqual(self.store.jobs(), [])
 
-    def test_four_protected_states_cannot_be_archived(self):
+    def test_busy_states_require_stopping_before_archive(self):
         job = self.add()
-        for state in ('done', 'queued', 'uploading', 'finishing'):
+        for state in ('queued', 'uploading', 'finishing'):
             self.store.update(job['id'], state=state, video_id='youtube-id')
-            with self.assertRaises(ValueError): remove_drafts(self.store,[job['id']])
+            with self.assertRaises(ValueError): remove_jobs(self.store,[job['id']])
             self.assertTrue(Path(job['path']).exists())
 
     def test_other_states_with_video_id_can_be_archived(self):
-        for state in ('draft', 'error', 'paused', 'warning'):
+        for state in ('draft', 'error', 'paused', 'warning', 'done'):
             job = self.add(folder=state, content=state.encode())
             self.store.update(job['id'], state=state, video_id='existing-youtube-id')
-            result = remove_drafts(self.store, [job['id']])
+            result = remove_jobs(self.store, [job['id']])
             self.assertTrue((Path(result['moved'][0]['destination'])/'a.mp4').exists())
+        self.assertEqual(self.store.jobs(), [])
+
+    def test_missing_source_can_still_be_removed_from_queue(self):
+        job = self.add()
+        Path(job['path']).unlink()
+        plans = plan_removal(self.store, [job['id']])[1]
+        self.assertTrue(plans[0]['missing'])
+        remove_jobs(self.store, [job['id']])
         self.assertEqual(self.store.jobs(), [])
 
     def test_archive_cannot_contain_another_watch(self):
@@ -93,7 +101,7 @@ class RemovalTests(unittest.TestCase):
         stale_rows, _ = scan_folder(str(self.linked))
         preview = plan_removal(self.store, [job['id']])[1]
         self.assertTrue(source.exists())
-        remove_drafts(self.store, [job['id']])
+        remove_jobs(self.store, [job['id']])
         dest = Path(preview[0]['destination'])
         self.assertEqual(dest.parent, self.root/'Channel-remove video')
         self.assertEqual((dest/'thumb.jpg').read_bytes(), b'image')
@@ -106,15 +114,15 @@ class RemovalTests(unittest.TestCase):
         job = self.add()
         existing = self.root/'Channel-remove video'/'clip';existing.mkdir(parents=True)
         (existing/'keep').write_bytes(b'keep')
-        result = remove_drafts(self.store, [job['id']])
+        result = remove_jobs(self.store, [job['id']])
         self.assertEqual(Path(result['moved'][0]['destination']).name, 'clip (2)')
         self.assertEqual((existing/'keep').read_bytes(), b'keep')
 
     def test_shared_folder_requires_all_videos(self):
         first = self.add(); second = self.add(name='b.mp4', content=b'other')
-        with self.assertRaises(ValueError): remove_drafts(self.store, [first['id']])
+        with self.assertRaises(ValueError): remove_jobs(self.store, [first['id']])
         self.assertTrue(Path(first['path']).exists())
-        remove_drafts(self.store, [first['id'],second['id']])
+        remove_jobs(self.store, [first['id'],second['id']])
         self.assertEqual(self.store.jobs(), [])
 
     def test_failed_second_move_rolls_back_first(self):
@@ -124,7 +132,7 @@ class RemovalTests(unittest.TestCase):
             if source == Path(second['path']).parent: raise PermissionError('locked')
             return rename(source, dest)
         with patch.object(Path, 'rename', fail_second), self.assertRaises(ValueError):
-            remove_drafts(self.store, [first['id'],second['id']])
+            remove_jobs(self.store, [first['id'],second['id']])
         self.assertTrue(Path(first['path']).exists())
         self.assertTrue(Path(second['path']).exists())
         self.assertEqual(len(self.store.jobs()), 2)
@@ -132,7 +140,7 @@ class RemovalTests(unittest.TestCase):
     def test_database_failure_restores_folder(self):
         job = self.add()
         with patch.object(self.store, 'remove', side_effect=RuntimeError('db')), self.assertRaises(ValueError):
-            remove_drafts(self.store, [job['id']])
+            remove_jobs(self.store, [job['id']])
         self.assertTrue(Path(job['path']).exists())
         self.assertEqual(len(self.store.jobs()), 1)
 
@@ -147,4 +155,4 @@ class RemovalTests(unittest.TestCase):
         job = self.add()
         row, _ = scan_folder(str(self.linked))
         self.store.add(row[0], 'other')
-        with self.assertRaises(ValueError): remove_drafts(self.store,[job['id']])
+        with self.assertRaises(ValueError): remove_jobs(self.store,[job['id']])
