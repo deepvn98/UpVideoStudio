@@ -405,6 +405,7 @@ class ServerTests(TempCase):
         self.assertTrue(self.app.store.job(extra['id'])['made_for_kids'])
         self.assertEqual(self.app.store.automation('a')['content']['playlists'],['PL_A','PL_B'])
         self.assertTrue(self.app.store.automation('a')['content']['made_for_kids'])
+        self.assertEqual(self.app.snapshot()['automation']['a']['content']['playlists'],['PL_A','PL_B'])
         for job in jobs[1:]:self.assertEqual(self.app.store.job(job['id']),job)
 
     def test_bulk_playlists_require_explicit_matching_channel(self):
@@ -431,9 +432,27 @@ class ServerTests(TempCase):
         self.assertEqual(self.app.store.job(jobs[0]['id'])['publish_at'],'2035-01-06T12:00:00+00:00')
         self.assertEqual(self.app.store.job(extra['id'])['publish_at'],'2035-01-07T12:00:00+00:00')
         self.assertEqual(self.app.store.automation('a')['schedule'],
-                         {'date':'2035-01-01','slots':'12:00','interval':1,'offset':0})
+                         {'date':'2035-01-01','slots':'12:00','interval':1,'offset':0,
+                          'sync':False,'visibility':'schedule'})
+        self.assertEqual(self.app.snapshot()['automation']['a']['schedule']['sync'],False)
         self.assertEqual(self.app.store.job(jobs[1]['id'])['publish_at'],'2035-01-05T12:00:00+00:00')
         for job in jobs[2:]:self.assertEqual(self.app.store.job(job['id']),job)
+
+    def test_visibility_mode_clears_schedule_and_is_saved_for_future_drafts(self):
+        jobs=self.mixed_jobs()
+        self.app.store.update(jobs[0]['id'],publish_at='2035-01-01T12:00:00+00:00')
+        task=self.app.action('/api/schedule',{'ids':[jobs[0]['id']], 'account':'a',
+            'visibility':'unlisted','date':'2035-01-01','slots':'12:00',
+            'interval':1,'offset':0,'sync':True},self.base)
+        for _ in range(100):
+            with self.app.task_lock: result=self.app.tasks[task['task']]
+            if result['state']!='running':break
+            time.sleep(.01)
+        self.assertEqual(result['state'],'done',result)
+        changed=self.app.store.job(jobs[0]['id'])
+        self.assertEqual(changed['privacy'],'unlisted')
+        self.assertEqual(changed['publish_at'],'')
+        self.assertEqual(self.app.store.automation('a')['schedule']['visibility'],'unlisted')
 
     def setUp(self):
         super().setUp()

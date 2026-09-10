@@ -50,7 +50,9 @@ class App:
             j.pop('watch_source', None)
             jobs.append(j)
         accounts = self.store.accounts()
-        return {'jobs': jobs, 'accounts': accounts, 'events': self.store.events(), 'watches': self.store.watches()}
+        automation = {account['id']: self.automation_rule(account['id']) for account in accounts}
+        return {'jobs': jobs, 'accounts': accounts, 'events': self.store.events(),
+                'watches': self.store.watches(), 'automation': automation}
 
     def background(self, fn):
         tid = secrets.token_hex(12)
@@ -121,7 +123,8 @@ class App:
         content = {key: value for key, value in content.items() if key in allowed}
         planned = {}
         schedule_rule = rule.get('schedule')
-        if schedule_rule:
+        visibility = schedule_rule.get('visibility', 'schedule') if schedule_rule else ''
+        if schedule_rule and visibility == 'schedule':
             account = self.store.account(aid)
             related = {a['id'] for a in self.store.accounts()
                        if account and a['channel_id'] == account['channel_id']}
@@ -139,6 +142,8 @@ class App:
             changes = dict(content)
             if job['id'] in planned:
                 changes.update(publish_at=planned[job['id']], privacy='private')
+            elif visibility in {'private', 'unlisted', 'public'}:
+                changes.update(publish_at='', privacy=visibility)
             if changes:
                 updates.append((job['id'], changes))
         return self.store.update_many(updates) if updates else jobs
@@ -202,7 +207,13 @@ class App:
         if route == '/api/schedule':
             def plan():
                 aid = body['account']
-                remote = self.google.scheduled(aid) if body.get('sync', True) else []
+                visibility = body.get('visibility', 'schedule')
+                if not isinstance(visibility, str) or visibility not in {'private', 'unlisted', 'public', 'schedule'}:
+                    raise ValueError('Chế độ hiển thị không hợp lệ.')
+                sync = body.get('sync', True)
+                if type(sync) is not bool:
+                    raise ValueError('Lựa chọn đồng bộ lịch không hợp lệ.')
+                remote = self.google.scheduled(aid) if visibility == 'schedule' and sync else []
                 with self.mutation, self.engine.lock:
                     ids = list(dict.fromkeys(body.get('ids', [])))
                     jobs = [self.store.job(jid) for jid in ids]
@@ -216,16 +227,21 @@ class App:
                             and not j['session'] and not j['video_id']]
                     ids = [j['id'] for j in jobs]
                     related = {a['id'] for a in self.store.accounts() if a['channel_id'] == account['channel_id']}
-                    occupied = remote + [j['publish_at'] for j in self.store.jobs()
-                                         if (j['account'] in related or j.get('channel_id') == account['channel_id'])
-                                         and j['id'] not in ids and j['publish_at']]
-                    times = schedule(len(jobs), body['date'], body['slots'], int(body['interval']), int(body['offset']), occupied)
-                    self.store.update_many([(job['id'], {'publish_at': when, 'privacy': 'private'})
-                                            for job, when in zip(jobs, times)])
+                    if visibility == 'schedule':
+                        occupied = remote + [j['publish_at'] for j in self.store.jobs()
+                                             if (j['account'] in related or j.get('channel_id') == account['channel_id'])
+                                             and j['id'] not in ids and j['publish_at']]
+                        times = schedule(len(jobs), body['date'], body['slots'], int(body['interval']), int(body['offset']), occupied)
+                        self.store.update_many([(job['id'], {'publish_at': when, 'privacy': 'private'})
+                                                for job, when in zip(jobs, times)])
+                    else:
+                        times = []
+                        self.store.update_many([(job['id'], {'publish_at': '', 'privacy': visibility})
+                                                for job in jobs])
                     self.store.save_automation(aid, schedule={
                         'date': body['date'], 'slots': body['slots'], 'interval': int(body['interval']),
-                        'offset': int(body['offset'])})
-                return {'count': len(times), 'times': times}
+                        'offset': int(body['offset']), 'sync': sync, 'visibility': visibility})
+                return {'count': len(jobs), 'times': times, 'visibility': visibility}
             return self.background(plan)
         with self.mutation, self.engine.lock:
             if route == '/api/unwatch':

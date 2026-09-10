@@ -3,7 +3,7 @@ const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const token = $('meta[name="studio-token"]').content;
 const {categories, languages} = JSON.parse($('meta[name="studio-catalog"]').content);
-const state = {jobs: [], accounts: [], events: [], selected: new Set(), filter: 'all', view: 'queue', channel: ''};
+const state = {jobs: [], accounts: [], events: [], automation: {}, selected: new Set(), filter: 'all', view: 'queue', channel: ''};
 const labels = {draft:'Bản nháp', queued:'Chờ tải lên', uploading:'Đang tải lên', finishing:'Hoàn thiện', paused:'Tạm dừng', done:'Đã tải lên', error:'Cần xử lý', warning:'Cần hoàn thiện'};
 const privacy = {private:'Riêng tư', unlisted:'Không công khai', public:'Công khai'};
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -91,12 +91,13 @@ function errorInModal(error){let el=$('#modal-error');if(!el){el=document.create
 function options(list, value){return list.map(([id,name])=>`<option value="${esc(id)}" ${String(id)===String(value)?'selected':''}>${esc(name)}</option>`).join('');}
 function channelOptions(value){return options(state.accounts.map(a=>[a.id,a.name+' · '+a.channel_id]),value);}
 function showView(view,persist=true){state.view=view;$$('.view').forEach(el=>el.hidden=el.id!=='view-'+view);$$('.nav').forEach(el=>el.classList.toggle('active',el.dataset.view===view));$('#crumb').textContent={queue:'Hàng đợi',channels:'Kênh của tôi',history:'Nhật ký hoạt động',guide:'Hướng dẫn'}[view];render();if(persist)saveUI();}
-function visible(){return state.jobs.filter(j=>{
+function groupByChannel(jobs){const order=new Map(state.accounts.map((account,index)=>[account.id,index]));let next=order.size;for(const job of jobs)if(!order.has(job.account))order.set(job.account,next++);return [...jobs].sort((left,right)=>order.get(left.account)-order.get(right.account));}
+function visible(){const jobs=state.jobs.filter(j=>{
   const q=$('#search').value.toLocaleLowerCase();
   if(q&&!j.title.toLocaleLowerCase().includes(q))return false;
   if(state.channel&&j.account!==state.channel)return false;
   return state.filter==='all'||state.filter==='active'&&active(j)||state.filter==='issues'&&['warning','error','paused'].includes(j.state)||j.state===state.filter;
-});}
+});return state.channel?jobs:groupByChannel(jobs);}
 function render(){
   $$('.tab').forEach(t=>t.classList.toggle('active',t.dataset.filter===state.filter));
   $('#nav-count').textContent=state.jobs.length;$('#total-count').textContent=state.jobs.length;
@@ -160,11 +161,14 @@ async function edit(jid){
 function bulk(){
   const jobs=draftSelection();
   if(!jobs.length){toast('Không có bản nháp phù hợp trong lựa chọn.',true);return;}
+  const channel=state.channel;
+  const saved=channel?(state.automation?.[channel]?.content||{}):{};
   const common=key=>jobs.every(j=>j[key]===jobs[0][key])?jobs[0][key]:null;
-  modal('Khai báo cho '+jobs.length+' video',`<div class="info-box">Các giá trị bạn chọn sẽ được áp dụng cho tất cả video đã chọn. Chọn “Giữ nguyên từng video” nếu không muốn đổi ngôn ngữ hoặc danh mục.</div><div class="form-grid"><div class="field"><label for="bulk-language">Ngôn ngữ (Language)</label><select id="bulk-language">${options([['__keep__','Giữ nguyên từng video'],...languages],common('language')??'__keep__')}</select></div><div class="field"><label for="bulk-category">Danh mục (Category)</label><select id="bulk-category">${options([['__keep__','Giữ nguyên từng video'],...categories],common('category')??'__keep__')}</select></div><div class="field"><label for="bulk-kids">Nội dung dành cho trẻ em?</label><select id="bulk-kids">${boolOptions(common('made_for_kids'))}</select></div><div class="field"><label for="bulk-ai">Nội dung chỉnh sửa/tổng hợp cần khai báo?</label><select id="bulk-ai">${boolOptions(common('synthetic'))}</select><small>Chọn theo nội dung thực tế và hướng dẫn khai báo trong YouTube Studio.</small></div></div><div class="modal-footer"><button class="button primary" id="bulk-save">Áp dụng cho ${jobs.length} video</button></div>`);
-  $('#bulk-language').value='en-US';
+  const latest=key=>Object.prototype.hasOwnProperty.call(saved,key)?saved[key]:common(key);
+  modal('Khai báo cho '+jobs.length+' video',`<div class="info-box">Các giá trị bạn chọn sẽ được áp dụng cho tất cả video đã chọn. Chọn “Giữ nguyên từng video” nếu không muốn đổi ngôn ngữ hoặc danh mục.</div><div class="form-grid"><div class="field"><label for="bulk-language">Ngôn ngữ (Language)</label><select id="bulk-language">${options([['__keep__','Giữ nguyên từng video'],...languages],latest('language')??'__keep__')}</select></div><div class="field"><label for="bulk-category">Danh mục (Category)</label><select id="bulk-category">${options([['__keep__','Giữ nguyên từng video'],...categories],latest('category')??'__keep__')}</select></div><div class="field"><label for="bulk-kids">Nội dung dành cho trẻ em?</label><select id="bulk-kids">${boolOptions(latest('made_for_kids'))}</select></div><div class="field"><label for="bulk-ai">Nội dung chỉnh sửa/tổng hợp cần khai báo?</label><select id="bulk-ai">${boolOptions(latest('synthetic'))}</select><small>Chọn theo nội dung thực tế và hướng dẫn khai báo trong YouTube Studio.</small></div></div><div class="modal-footer"><button class="button primary" id="bulk-save">Áp dụng cho ${jobs.length} video</button></div>`);
+  if(!channel&&$('#bulk-language').value==='__keep__')$('#bulk-language').value='en-US';
   if($('#bulk-kids').value==='')$('#bulk-kids').value='false';
-  const generation=modalGeneration, channel=state.channel;
+  const generation=modalGeneration;
   const note=document.createElement('p');note.className='helper';note.textContent=`Thiết lập này sẽ áp dụng cho toàn bộ bản nháp chưa bắt đầu của ${new Set(jobs.map(j=>j.account)).size} kênh đã chọn.`;$('#modal-body').prepend(note);
   let playlistLoaded=false,playlistDirty=false;
   if(channel){
@@ -179,7 +183,8 @@ function bulk(){
         if(generation!==modalGeneration)return;
         if(response.state==='error')throw new Error(response.error);
         if(response.state==='done'){
-          $('#bulk-playlists').innerHTML=response.result.length?response.result.map(p=>`<label class="checkbox-label"><input type="checkbox" value="${esc(p.id)}" ${jobs.every(j=>j.playlists.includes(p.id))?'checked':''}>${esc(p.title)}</label>`).join(''):'Kênh chưa có playlist.';
+          const selectedPlaylists=Object.prototype.hasOwnProperty.call(saved,'playlists')?saved.playlists:null;
+          $('#bulk-playlists').innerHTML=response.result.length?response.result.map(p=>`<label class="checkbox-label"><input type="checkbox" value="${esc(p.id)}" ${(selectedPlaylists?selectedPlaylists.includes(p.id):jobs.every(j=>j.playlists.includes(p.id)))?'checked':''}>${esc(p.title)}</label>`).join(''):'Kênh chưa có playlist.';
           playlistLoaded=true;
           $('#bulk-playlists').onchange=()=>{playlistDirty=true;};break;
         }
@@ -196,7 +201,26 @@ function bulk(){
     }catch(e){errorInModal(e);}
   };
 }
-function plan(){const chosen=draftSelection();if(!chosen.length)return;if(new Set(chosen.map(j=>j.account)).size!==1){toast('Chọn video chưa upload thuộc cùng một kênh.',true);return;}const aid=chosen[0].account,jobs=state.jobs.filter(j=>j.account===aid&&j.state==='draft'&&editable(j));const today=localDateTime(new Date().toISOString()).slice(0,10);const offset=-new Date().getTimezoneOffset();modal('Xếp lịch cho toàn bộ '+jobs.length+' video',`<div class="info-box">Kênh: <b>${esc(account(aid)?.name)}</b><br>Thiết lập này áp dụng cho toàn bộ bản nháp chưa bắt đầu của kênh và các video được thêm vào sau này. Lịch được tính lại theo thứ tự hàng đợi.</div><div class="form-grid"><div class="field"><label for="schedule-date">Bắt đầu từ ngày</label><input type="date" id="schedule-date" value="${today}"></div><div class="field"><label for="schedule-slots">Khung giờ mỗi ngày</label><input id="schedule-slots" value="08:00, 19:00"></div><div class="field"><label for="schedule-interval">Lặp mỗi bao nhiêu ngày?</label><input type="number" id="schedule-interval" min="1" max="365" value="1"><small>1 = hằng ngày; 2 = cách ngày.</small></div><div class="field"><label for="schedule-offset">Múi giờ cố định</label><select id="schedule-offset">${options(Array.from({length:105},(_,i)=>{const n=-720+i*15;return [n,'UTC'+(n>=0?'+':'-')+String(Math.floor(Math.abs(n)/60)).padStart(2,'0')+':'+String(Math.abs(n)%60).padStart(2,'0')];}),offset)}</select><small>Không tự đổi theo giờ mùa hè.</small></div></div><label class="checkbox-label" style="margin-top:20px"><input type="checkbox" id="sync-schedule" checked>Đồng bộ lịch đang có trên YouTube trước khi xếp (có sử dụng quota API).</label><div class="modal-footer"><button class="button primary" id="schedule-save">Xếp lịch toàn bộ kênh</button></div>`);$('#schedule-save').onclick=async()=>{try{const result=await task('/api/schedule',{ids:chosen.map(j=>j.id),account:aid,date:$('#schedule-date').value,slots:$('#schedule-slots').value,interval:Number($('#schedule-interval').value),offset:Number($('#schedule-offset').value),sync:$('#sync-schedule').checked},'Đang kiểm tra và xếp lịch…');closeModal();await refresh();toast(`Đã xếp lại lịch ${result.count} video và lưu quy tắc cho kênh.`);}catch(e){errorInModal(e);}};}
+function plan(){
+  const chosen=draftSelection();
+  if(!chosen.length)return;
+  if(new Set(chosen.map(j=>j.account)).size!==1){toast('Chọn video chưa upload thuộc cùng một kênh.',true);return;}
+  const aid=chosen[0].account;
+  const jobs=state.jobs.filter(j=>j.account===aid&&j.state==='draft'&&editable(j));
+  const saved=state.automation?.[aid]?.schedule||{};
+  const today=localDateTime(new Date().toISOString()).slice(0,10);
+  const date=saved.date||today;
+  const slots=saved.slots||'08:00, 19:00';
+  const interval=Number(saved.interval)||1;
+  const offset=Number.isFinite(Number(saved.offset))?Number(saved.offset):-new Date().getTimezoneOffset();
+  const sync=saved.sync!==false;
+  const visibility=['private','unlisted','public','schedule'].includes(saved.visibility)?saved.visibility:'schedule';
+  const visibilityOption=(value,title,description)=>`<label class="visibility-option"><input type="radio" name="schedule-visibility" value="${value}" ${visibility===value?'checked':''}><span><b>${title}</b><small>${description}</small></span></label>`;
+  modal('Hiển thị và xếp lịch cho '+jobs.length+' video',`<div class="info-box">Kênh: <b>${esc(account(aid)?.name)}</b><br>Thiết lập này áp dụng cho toàn bộ bản nháp chưa bắt đầu của kênh và các video được thêm vào sau này.</div><fieldset class="visibility-panel"><legend>Lưu hoặc xuất bản</legend><p>Chọn ai có thể xem video.</p>${visibilityOption('private','Riêng tư','Chỉ bạn và những người bạn chọn mới xem được video.')}${visibilityOption('unlisted','Không công khai','Bất kỳ ai có đường liên kết đều có thể xem video.')}${visibilityOption('public','Công khai','Mọi người đều có thể xem video.')}<label class="premiere-option"><input type="checkbox" disabled><span>Đặt làm Công chiếu tức thì<small>YouTube Data API chưa hỗ trợ tạo Premiere; hãy bật trong YouTube Studio sau khi tải lên.</small></span></label>${visibilityOption('schedule','Lên lịch','Chọn ngày và giờ để video tự chuyển sang công khai.')}</fieldset><div id="schedule-fields" ${visibility==='schedule'?'':'hidden'}><div class="form-grid"><div class="field"><label for="schedule-date">Bắt đầu từ ngày</label><input type="date" id="schedule-date" value="${esc(date)}"></div><div class="field"><label for="schedule-slots">Khung giờ mỗi ngày</label><input id="schedule-slots" value="${esc(slots)}"></div><div class="field"><label for="schedule-interval">Lặp mỗi bao nhiêu ngày?</label><input type="number" id="schedule-interval" min="1" max="365" value="${esc(interval)}"><small>1 = hằng ngày; 2 = cách ngày.</small></div><div class="field"><label for="schedule-offset">Múi giờ cố định</label><select id="schedule-offset">${options(Array.from({length:105},(_,i)=>{const n=-720+i*15;return [n,'UTC'+(n>=0?'+':'-')+String(Math.floor(Math.abs(n)/60)).padStart(2,'0')+':'+String(Math.abs(n)%60).padStart(2,'0')];}),offset)}</select><small>Không tự đổi theo giờ mùa hè.</small></div></div><label class="checkbox-label schedule-sync"><input type="checkbox" id="sync-schedule" ${sync?'checked':''}>Đồng bộ lịch đang có trên YouTube trước khi xếp (có sử dụng quota API).</label></div><div class="modal-footer"><button class="button primary" id="schedule-save">${visibility==='schedule'?'Xếp lịch':'Áp dụng hiển thị'} toàn bộ kênh</button></div>`);
+  const updateVisibility=()=>{const scheduled=$('input[name="schedule-visibility"]:checked').value==='schedule';$('#schedule-fields').hidden=!scheduled;$('#schedule-save').textContent=(scheduled?'Xếp lịch':'Áp dụng hiển thị')+' toàn bộ kênh';};
+  $$('input[name="schedule-visibility"]').forEach(input=>input.onchange=updateVisibility);
+  $('#schedule-save').onclick=async()=>{try{const selectedVisibility=$('input[name="schedule-visibility"]:checked').value;const result=await task('/api/schedule',{ids:chosen.map(j=>j.id),account:aid,visibility:selectedVisibility,date:$('#schedule-date').value,slots:$('#schedule-slots').value,interval:Number($('#schedule-interval').value),offset:Number($('#schedule-offset').value),sync:$('#sync-schedule').checked},selectedVisibility==='schedule'?'Đang kiểm tra và xếp lịch…':'Đang cập nhật chế độ hiển thị…');closeModal();await refresh();toast(selectedVisibility==='schedule'?`Đã xếp lại lịch ${result.count} video và lưu quy tắc cho kênh.`:`Đã cập nhật chế độ hiển thị cho ${result.count} video và lưu quy tắc cho kênh.`);}catch(e){errorInModal(e);}};
+}
 function startReview(jobs){jobs=jobs.filter(j=>!active(j)&&j.state!=='done');if(!jobs.length){toast('Không có video để bắt đầu.');return;}modal('Sẵn sàng tải '+jobs.length+' video?',`<p class="helper">Kiểm tra kênh và chế độ hiển thị. Video công khai có thể xuất hiện ngay sau khi xử lý xong; video có lịch sẽ được công khai theo giờ đã chọn.</p><div class="review-list">${jobs.map(j=>`<div class="review-item"><b>${esc(j.title)}</b><small>${esc(account(j.account)?.name||'Kênh chưa kết nối')} · ${j.publish_at?fmt(j.publish_at):privacy[j.privacy]}${j.video_id?' · chỉ hoàn thiện bước còn thiếu':''}</small></div>`).join('')}</div><div class="modal-footer"><button class="button" id="review-back">Quay lại</button><button class="button primary" id="confirm-start">▶ Bắt đầu tải lên</button></div>`);$('#review-back').onclick=closeModal;$('#confirm-start').onclick=async()=>{try{await api('/api/start',{ids:jobs.map(j=>j.id)});closeModal();await refresh();toast('Đã đưa video vào hàng đợi tải lên.');}catch(e){errorInModal(e);}};}
 
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;try{

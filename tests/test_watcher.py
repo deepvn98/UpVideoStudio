@@ -126,6 +126,16 @@ class WatcherTests(unittest.TestCase):
             self.assertEqual(job['playlists'], ['PL_TRAVEL'])
             self.assertEqual(job['privacy'], 'private')
 
+    def test_new_files_inherit_saved_visibility_without_a_publish_date(self):
+        self.app.store.save_automation('a', schedule={
+            'date': '2035-01-01', 'slots': '08:00', 'interval': 1, 'offset': 0,
+            'sync': False, 'visibility': 'unlisted'})
+        (self.folder/'a.mp4').write_bytes(b'one')
+        self.sync()
+        job = self.app.store.jobs()[0]
+        self.assertEqual(job['privacy'], 'unlisted')
+        self.assertEqual(job['publish_at'], '')
+
     def test_legacy_unconfigured_draft_inherits_rules_from_configured_videos(self):
         for name, content in [('a.mp4', b'one'), ('b.mp4', b'two'), ('c.mp4', b'three')]:
             (self.folder/name).write_bytes(content)

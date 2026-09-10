@@ -30,6 +30,17 @@ test('specific channel limits drafts; all channels allows bulk metadata', ()=>{
   assert.equal(helpers(jobs).drafts().length,2);
   assert.deepEqual(Array.from(helpers(jobs,'a').drafts(),j=>j.account),['a']);
 });
+test('all-channel queue groups videos by channel and preserves order inside each group', ()=>{
+  const jobs=[
+    {id:'a1',account:'a'},{id:'b1',account:'b'},
+    {id:'b2',account:'b'},{id:'a2',account:'a'}
+  ];
+  const context={state:{accounts:[{id:'a'},{id:'b'}]}};
+  const helper=source.split('\n').find(line=>line.startsWith('function groupByChannel('));
+  vm.runInNewContext(helper+'\nthis.grouped=groupByChannel;',context);
+  assert.deepEqual(Array.from(context.grouped(jobs),job=>job.id),['a1','a2','b1','b2']);
+  assert.deepEqual(jobs.map(job=>job.id),['a1','b1','b2','a2']);
+});
 test('removal follows queue state regardless of saved video ID', ()=>{
   const h=helpers([]);
   for(const state of ['paused','error']) assert.equal(h.canRemove({state,has_session:true,video_id:''}),true);

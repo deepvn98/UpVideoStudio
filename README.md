@@ -1,12 +1,14 @@
-# UpVideo Studio 1.5.0
+# UpVideo Studio 1.6.0
 
 Ứng dụng Windows cục bộ để quản lý nội dung, playlist, lịch xuất bản và tiến trình tải video lên nhiều kênh YouTube.
 
 ## Thao tác trên nhiều trạng thái
 
-Chọn ít nhất một bản nháp rồi bấm **Khai báo nội dung**: thiết lập được lưu theo kênh và áp dụng cho toàn bộ bản nháp chưa bắt đầu của kênh đó. **Xếp lịch** yêu cầu một kênh cụ thể, tính lại lịch cho toàn bộ bản nháp chưa bắt đầu và lưu quy tắc để áp dụng cho video được thêm sau này. Video lỗi, tạm dừng, đang chạy và đã tải lên được giữ nguyên.
+Chọn ít nhất một bản nháp rồi bấm **Khai báo nội dung**: thiết lập được lưu theo kênh và áp dụng cho toàn bộ bản nháp chưa bắt đầu của kênh đó. **Xếp lịch** yêu cầu một kênh cụ thể, tính lại lịch cho toàn bộ bản nháp chưa bắt đầu và lưu quy tắc để áp dụng cho video được thêm sau này. Khi mở lại chương trình, hai hộp thoại hiển thị đúng thiết lập được lưu gần nhất của kênh đang chọn. Video lỗi, tạm dừng, đang chạy và đã tải lên được giữ nguyên.
 
 Khi bộ lọc **Kênh** chọn một kênh cụ thể, **Khai báo nội dung** chỉ hiển thị tên playlist của kênh đó. Playlist chỉ thay đổi khi người dùng tick hoặc bỏ tick trong danh sách. Chọn **Tất cả các kênh** sẽ không hiện phần playlist. Nếu tải danh sách lỗi, các playlist đã lưu được giữ nguyên.
+
+Khi chọn **Tất cả các kênh**, hàng đợi tự nhóm video theo thứ tự kênh trong danh sách tài khoản và giữ nguyên thứ tự video bên trong từng kênh.
 
 **Xóa bản nháp** nhận bốn trạng thái **Bản nháp**, **Cần xử lý**, **Tạm dừng**, **Cần hoàn thiện**, kể cả khi đã có phiên upload hoặc video ID. Bốn trạng thái **Đã tải lên**, **Chờ tải lên**, **Đang tải lên**, **Hoàn thiện** bị chặn. Thư mục vẫn được chuyển sang `-remove video`; mục bị bỏ khỏi hàng đợi. Thao tác này không xóa video hoặc hủy lịch trên YouTube.
 
@@ -107,7 +109,7 @@ Hỗ trợ tiêu đề trường bằng tiếng Việt (`Tiêu đề:`, `Giới 
 1. **Thêm video:** chọn kênh và thư mục. Chương trình tạo bản nháp, chưa upload.
 2. **Sửa nội dung:** bấm tên video. Kiểm tra tiêu đề, mô tả, tag, danh mục, ngôn ngữ, thumbnail, quyền riêng tư và playlist. Playlist được nhận diện bằng ID và tải đủ các trang kết quả.
 3. **Khai báo nội dung:** chọn Có/Không cho video dành cho trẻ em và nội dung chỉnh sửa/tổng hợp cần khai báo; chọn thêm **Ngôn ngữ (Language)** và **Danh mục (Category)** cho nhiều bản nháp cùng lúc. Nếu các video có giá trị khác nhau, ngôn ngữ/danh mục mặc định là **Giữ nguyên từng video**. Chọn **Không khai báo** để bỏ ngôn ngữ đã lưu.
-4. **Xếp lịch:** chọn các video của cùng một kênh, ngày bắt đầu, khung giờ và khoảng cách ngày. `Mỗi 1 ngày` là hằng ngày; `Mỗi 2 ngày` là cách ngày. Múi giờ lịch là UTC offset cố định, không tự áp dụng DST. Cột lịch hiển thị theo múi giờ trình duyệt.
+4. **Hiển thị và xếp lịch:** chọn **Riêng tư**, **Không công khai**, **Công khai** hoặc **Lên lịch** cho toàn bộ bản nháp của cùng một kênh. Chế độ Lên lịch dùng ngày bắt đầu, khung giờ và khoảng cách ngày; `Mỗi 1 ngày` là hằng ngày, `Mỗi 2 ngày` là cách ngày. Múi giờ lịch là UTC offset cố định, không tự áp dụng DST. YouTube Data API không có thuộc tính tạo Premiere, nên Công chiếu phải được bật trực tiếp trong YouTube Studio.
 5. Mặc định đồng bộ lịch trên YouTube, kết hợp với lịch lưu trong hàng đợi và nối tiếp sau lịch xa nhất. Việc đồng bộ duyệt playlist uploads đầy đủ và dùng quota; kênh có nhiều video có thể cần thời gian. Nếu không đọc được API, thao tác báo lỗi thay vì âm thầm giả định kênh trống. Có thể chủ động bỏ chọn đồng bộ để chỉ dựa vào dữ liệu cục bộ.
 6. **Bắt đầu:** xem lại kênh/chế độ hiển thị rồi bấm xác nhận tải lên. Tối đa ba kênh chạy đồng thời, mỗi kênh chỉ có một worker kể cả khi kết nối qua nhiều OAuth client.
 7. **Tạm dừng:** dừng ở ranh giới phần dữ liệu, không hủy phần mạng đang gửi. Tiếp tục truy vấn vị trí upload do Google xác nhận.
