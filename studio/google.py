@@ -26,6 +26,11 @@ class ApiError(Exception):
         self.status, self.reason, self.retry_after = status, reason, retry_after
         hints = {'quotaExceeded': 'Hết hạn mức API. Kiểm tra quota trong Google Cloud rồi thử lại.',
                  'uploadLimitExceeded': 'Kênh đã chạm giới hạn tải video. Hãy thử lại sau.',
+                 'invalid_client': ('Google từ chối OAuth Client ID/secret đã lưu cho kênh này. '
+                                    'Vào Kênh của tôi → Kết nối kênh và kết nối lại đúng kênh bằng file OAuth Desktop Client JSON còn hiệu lực. '
+                                    'Kết nối lại cùng OAuth client và cùng kênh sẽ giữ hàng đợi. Nếu vẫn lỗi, hãy tải lại JSON từ OAuth client còn hoạt động trong Google Cloud.'),
+                 'deleted_client': ('OAuth client đã bị xóa trong Google Cloud. Tạo OAuth Client Desktop mới và kết nối lại đúng kênh bằng JSON mới. '
+                                    'UpVideo Studio sẽ chuyển dữ liệu cục bộ sang kết nối mới sau khi xác nhận đúng kênh.'),
                  'invalid_grant': 'Phiên đăng nhập hết hiệu lực. Hãy kết nối lại đúng kênh.',
                  'insufficientPermissions': 'Thiếu quyền Google. Hãy kết nối lại kênh.',
                  'forbidden': 'Google từ chối thao tác. Kiểm tra quyền của kênh.',
@@ -77,12 +82,14 @@ def header(headers, name, default=''):
 
 
 class Google:
+    AUTH_REASONS = {'invalid_client', 'deleted_client', 'invalid_grant', 'insufficientPermissions'}
+
     def __init__(self, store):
         self.store = store
         self.lock = threading.RLock()
         self.pending = {}
 
-    def begin(self, config, redirect):
+    def begin(self, config, redirect, expected_channel_id='', replace_account_id=''):
         client = config.get('installed', {})
         if not client.get('client_id', '').endswith('.apps.googleusercontent.com') or not client.get('client_secret'):
             raise ValueError('Chọn file OAuth Client JSON loại Desktop app từ Google Cloud.')
@@ -91,11 +98,40 @@ class Google:
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
         with self.lock:
             self.pending = {k: v for k, v in self.pending.items() if time.time()-v['created'] < 600}
-            self.pending[state] = dict(client=client, verifier=verifier, redirect=redirect, created=time.time())
+            self.pending[state] = dict(client=client, verifier=verifier, redirect=redirect,
+                                       expected_channel_id=expected_channel_id,
+                                       replace_account_id=replace_account_id, created=time.time())
         return 'https://accounts.google.com/o/oauth2/v2/auth?' + urllib.parse.urlencode({
             'client_id': client['client_id'], 'redirect_uri': redirect, 'response_type': 'code',
             'scope': SCOPES, 'access_type': 'offline', 'prompt': 'consent select_account',
             'state': state, 'code_challenge': challenge, 'code_challenge_method': 'S256'})
+
+    def begin_saved_reconnect(self, aid, redirect):
+        account = self.store.account(aid)
+        if not account:
+            raise ValueError('Không tìm thấy kênh cần kết nối lại. Hãy tải lại danh sách kênh.')
+        token = unseal(self.store.secret(aid))
+        client_id = token.get('client_id', '')
+        client_secret = token.get('client_secret', '')
+        if client_id != account.get('client_id') or not client_secret:
+            raise ValueError('Không tìm thấy đầy đủ OAuth client đã lưu. Hãy kết nối lại bằng file JSON của cùng OAuth client.')
+        config = {'installed': {'client_id': client_id, 'client_secret': client_secret}}
+        return self.begin(config, redirect, account['channel_id'])
+
+    def begin_account_replacement(self, aid, config, redirect):
+        account = self.store.account(aid)
+        if not account:
+            raise ValueError('Không tìm thấy kênh cần chuyển OAuth client.')
+        return self.begin(config, redirect, account['channel_id'], replace_account_id=aid)
+
+    def mark_flow_error(self, state, reason, message):
+        with self.lock:
+            flow = self.pending.pop(state, None)
+        if not flow or reason not in self.AUTH_REASONS or not flow.get('expected_channel_id'):
+            return
+        aid = flow.get('replace_account_id') or hashlib.sha256(
+            (flow['client']['client_id'] + ':' + flow['expected_channel_id']).encode()).hexdigest()[:32]
+        self.store.set_auth_status(aid, 'reauth_required', message, reason)
 
     def finish(self, state, code):
         with self.lock:
@@ -103,9 +139,16 @@ class Google:
         if not flow or time.time()-flow['created'] > 600:
             raise ValueError('Yêu cầu đăng nhập đã hết hạn. Hãy kết nối lại.')
         client = flow['client']
-        token = form(TOKEN, {'code': code, 'client_id': client['client_id'], 'client_secret': client['client_secret'],
-                             'redirect_uri': flow['redirect'], 'grant_type': 'authorization_code',
-                             'code_verifier': flow['verifier']})
+        try:
+            token = form(TOKEN, {'code': code, 'client_id': client['client_id'], 'client_secret': client['client_secret'],
+                                 'redirect_uri': flow['redirect'], 'grant_type': 'authorization_code',
+                                 'code_verifier': flow['verifier']})
+        except ApiError as exc:
+            if exc.reason in self.AUTH_REASONS and flow.get('expected_channel_id'):
+                aid = flow.get('replace_account_id') or hashlib.sha256(
+                    (client['client_id'] + ':' + flow['expected_channel_id']).encode()).hexdigest()[:32]
+                self.store.set_auth_status(aid, 'reauth_required', str(exc), exc.reason)
+            raise
         if not token.get('refresh_token'):
             raise ValueError('Google chưa cấp quyền duy trì đăng nhập. Hãy kết nối lại và chấp nhận quyền.')
         _, _, raw = request('GET', API + 'channels?part=snippet,contentDetails&mine=true&maxResults=50',
@@ -114,25 +157,37 @@ class Google:
         if len(channels) != 1:
             raise ValueError('Hãy đăng nhập và chọn đúng một kênh YouTube trong màn hình Google.')
         channel = channels[0]
+        if flow.get('expected_channel_id') and channel['id'] != flow['expected_channel_id']:
+            raise ValueError('Bạn đã chọn kênh YouTube khác. Hãy thử Kết nối lại và chọn đúng kênh được yêu cầu.')
         aid = hashlib.sha256((client['client_id'] + ':' + channel['id']).encode()).hexdigest()[:32]
         account = dict(id=aid, channel_id=channel['id'], name=channel['snippet']['title'],
                        uploads=channel['contentDetails']['relatedPlaylists']['uploads'],
-                       client_id=client['client_id'], connected=datetime.now(timezone.utc).isoformat())
+                       client_id=client['client_id'], connected=datetime.now(timezone.utc).isoformat(),
+                       auth_status='connected', auth_error='', auth_error_code='')
         token.update(client_id=client['client_id'], client_secret=client['client_secret'],
                      expires_at=time.time()+token.get('expires_in', 3600))
-        self.store.save_account(account, seal(token))
-        self.store.event('Đã kết nối kênh ' + account['name'])
+        if flow.get('replace_account_id'):
+            self.store.reconnect_account(flow['replace_account_id'], account, seal(token))
+        else:
+            self.store.save_account(account, seal(token))
+        self.store.event('Đã kết nối kênh ' + account['name'], account=aid)
         return account
 
     def access_token(self, aid, force=False):
         with self.lock:
             token = unseal(self.store.secret(aid))
             if force or token.get('expires_at', 0) < time.time()+90:
-                renewed = form(TOKEN, {'client_id': token['client_id'], 'client_secret': token['client_secret'],
-                                       'refresh_token': token['refresh_token'], 'grant_type': 'refresh_token'})
+                try:
+                    renewed = form(TOKEN, {'client_id': token['client_id'], 'client_secret': token['client_secret'],
+                                           'refresh_token': token['refresh_token'], 'grant_type': 'refresh_token'})
+                except ApiError as exc:
+                    if exc.reason in self.AUTH_REASONS:
+                        self.store.set_auth_status(aid, 'reauth_required', str(exc), exc.reason)
+                    raise
                 token.update(renewed)
                 token['expires_at'] = time.time()+renewed.get('expires_in', 3600)
                 self.store.renew_secret(aid, seal(token))
+                self.store.set_auth_status(aid, 'connected')
             return token['access_token']
 
     def raw(self, aid, method, url, data=None, headers=None):
@@ -144,9 +199,17 @@ class Google:
             return request(method, url, data, auth)
         except ApiError as exc:
             if exc.status != 401:
+                if exc.reason in self.AUTH_REASONS:
+                    self.store.set_auth_status(aid, 'reauth_required', str(exc), exc.reason)
                 raise
-            auth['Authorization'] = 'Bearer ' + self.access_token(aid, force=True)
-            return request(method, url, data, auth)
+            try:
+                auth['Authorization'] = 'Bearer ' + self.access_token(aid, force=True)
+                response = request(method, url, data, auth)
+            except ApiError as retry_error:
+                if retry_error.status == 401 or retry_error.reason in self.AUTH_REASONS:
+                    self.store.set_auth_status(aid, 'reauth_required', str(retry_error), retry_error.reason)
+                raise
+            return response
 
     def api(self, aid, resource, params=None, body=None, method='GET'):
         url = API + resource + '?' + urllib.parse.urlencode(params or {})

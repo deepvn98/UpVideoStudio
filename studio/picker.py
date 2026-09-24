@@ -10,6 +10,8 @@ def folder_windows():
 
     shell = ctypes.WinDLL('shell32', use_last_error=True)
     ole = ctypes.WinDLL('ole32', use_last_error=True)
+    user32 = ctypes.WinDLL('user32', use_last_error=True)
+    user32.GetForegroundWindow.restype = wintypes.HWND
     ole.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
     ole.CoInitializeEx.restype = ctypes.c_long
     ole.CoTaskMemFree.argtypes = [ctypes.c_void_p]
@@ -19,7 +21,10 @@ def folder_windows():
     shell.SHGetPathFromIDListEx.restype = wintypes.BOOL
     result = ole.CoInitializeEx(None, 2)
     display = ctypes.create_unicode_buffer(32768)
-    info = BrowseInfo(None, None, ctypes.cast(display, wintypes.LPWSTR),
+    # Make the native dialog owned by the foreground browser window so it stays
+    # above the web UI instead of appearing behind it.
+    owner = user32.GetForegroundWindow()
+    info = BrowseInfo(owner, None, ctypes.cast(display, wintypes.LPWSTR),
                       'Chọn thư mục video — UpVideo Studio', 0x41, None, 0, 0)
     pointer = None
     try:

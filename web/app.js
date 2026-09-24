@@ -7,6 +7,9 @@ const state = {jobs: [], accounts: [], events: [], automation: {}, selected: new
 const labels = {draft:'Bản nháp', queued:'Chờ tải lên', uploading:'Đang tải lên', finishing:'Hoàn thiện', paused:'Tạm dừng', done:'Đã tải lên', error:'Cần xử lý', warning:'Cần hoàn thiện'};
 const privacy = {private:'Riêng tư', unlisted:'Không công khai', public:'Công khai'};
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const assetErrorsMarkup = errors => errors?.length
+  ? `<small class="asset-error-text"><b>Lỗi cần sửa · bản nháp đang bị khóa tải lên</b><span>${[...new Set(errors)].map(esc).join('</span><span>')}</span></small>`
+  : '';
 const fmt = s => s ? new Date(s).toLocaleString('vi-VN',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit',year:'numeric'}) : '';
 const bytes = n => n < 1048576 ? (n/1024).toFixed(0)+' KB' : n < 1073741824 ? (n/1048576).toFixed(1)+' MB' : (n/1073741824).toFixed(2)+' GB';
 const account = id => state.accounts.find(a => a.id === id);
@@ -14,8 +17,8 @@ const active = j => ['queued','uploading','finishing'].includes(j.state);
 const editable = j => !active(j) && !j.has_session && !j.video_id;
 const selectedFrom = jobs => jobs.filter(j => state.selected.has(j.id));
 const visibleSelection = () => selectedFrom(visible());
-const draftSelection = () => visibleSelection().filter(j=>j.state==='draft' && editable(j) && (!state.channel || j.account===state.channel));
-let refreshing = false, modalGeneration = 0, queueDrag = null, shuttingDown = false;
+const draftSelection = () => visibleSelection().filter(j=>j.state==='draft' && !j.asset_errors?.length && editable(j) && (!state.channel || j.account===state.channel));
+let refreshing = false, modalGeneration = 0, queueDrag = null, shuttingDown = false, folderUpdateActive = false, authCheckStarted = false, busyTaskCount = 0;
 
 // UI preferences only: never store credentials, form drafts or upload commands.
 const UI_STORAGE_KEY = 'upvideo.ui.v1';
@@ -68,7 +71,8 @@ function toast(message, error=false) {
   const el = document.createElement('div'); el.className='toast'+(error?' error':'');el.textContent=message;$('#toasts').append(el);setTimeout(()=>el.remove(), error?10000:6000);
 }
 async function task(path, body, title) {
-  $('#busy-title').textContent=title;$('#busy').hidden=false;
+  const busy=$('#busy');$('#busy-title').textContent=title;busyTaskCount++;
+  if(!busy.open)busy.showModal();
   try {
     const result=await api(path,body);
     if (!result.task) return result;
@@ -78,7 +82,7 @@ async function task(path, body, title) {
       if(status.state==='error') throw new Error(status.error);
       if(status.state==='done') return status.result;
     }
-  } finally { $('#busy').hidden=true; }
+  } finally { busyTaskCount=Math.max(0,busyTaskCount-1);if(!busyTaskCount&&busy.open)busy.close(); }
 }
 function modal(title, body) {
   modalGeneration++;$('#modal-title').textContent=title;$('#modal-body').innerHTML=body;
@@ -87,18 +91,59 @@ function modal(title, body) {
 }
 function closeModal(){modalGeneration++;$('#modal').close();}
 function errorInModal(error){let el=$('#modal-error');if(!el){el=document.createElement('div');el.id='modal-error';el.className='modal-error';$('#modal-body').append(el);}el.textContent=error.message;el.scrollIntoView({block:'nearest'});}
+function importResultDetails(result){const sections=[];if(result.draft_duplicates?.length)sections.push(`<div class="review-item"><b>Trùng bản nháp · đã bỏ qua</b><small>${result.draft_duplicates.map(item=>esc(typeof item==='string'?item:`${item.video} · ${item.channel}`)).join('<br>')}</small></div>`);if(result.youtube_duplicates?.length)sections.push(`<div class="review-item"><b>Trùng trên YouTube · không được chọn</b>${result.youtube_duplicates.map(item=>`<small>${esc(item.filename||item.video)}${item.channel?' · '+esc(item.channel):''}: ${(item.matches||[]).map(match=>`<a href="${esc(match.url)}" target="_blank" rel="noopener noreferrer">${esc(match.title||match.id)}</a>`).join(', ')}</small>`).join('')}</div>`);if(result.warnings?.length)sections.push(`<div class="review-item"><b>Cảnh báo</b><small>${result.warnings.map(esc).join('<br>')}</small></div>`);if(sections.length)modal('Kết quả kiểm tra video',`<div class="info-box">Đã thêm ${result.added} bản nháp; bỏ qua ${result.duplicates} mục trùng.</div><div class="review-list">${sections.join('')}</div>`);}
+async function updateLinkedFolders(){
+  const button=$('#update-folders');if(folderUpdateActive)return;folderUpdateActive=true;button.disabled=true;
+  try{
+    const accounts=state.channel?[state.channel]:state.accounts.map(item=>item.id);
+    const preview=await task('/api/update-preview',{accounts},'Đang quét lại các thư mục đã liên kết…');
+    const actions=preview.actions||[];
+    const rows=actions.map((item,index)=>{
+      let text='';
+      if(item.action==='remove')text=`<small class="danger-text">Không còn trong thư mục · sẽ xóa khỏi hàng đợi và dữ liệu cục bộ. YouTube không bị xóa.</small>`;
+      else if(item.action==='changed')text='<small>Nội dung nguồn đã thay đổi · sẽ thay bản nháp cũ bằng bản mới.</small>';
+      else if(item.action==='unchanged')text='<small>Không thay đổi · giữ nguyên bản nháp.</small>';
+      else if(item.action==='duplicate-draft')text='<small>Trùng bản nháp khác của kênh · sẽ bỏ qua.</small>';
+      else if(item.action==='repost'){
+        text=`<label class="checkbox-label"><input type="checkbox" data-update-choice="${index}" data-choice-kind="repost"><span>Video đã đăng · tạo bản nháp mới để đăng lại trên ${esc(item.channel)}</span></label>${item.video_id?`<small>Video đang có: <a href="https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}" target="_blank" rel="noopener noreferrer">${esc(item.previous_title||item.video_id)}</a></small>`:''}`;
+      }else if(item.action==='youtube-review'){
+        text=`<label class="checkbox-label"><input type="checkbox" data-update-choice="${index}" data-choice-kind="youtube"><span>Cùng file video đã đăng · vẫn thêm bản nháp cho ${esc(item.channel)}</span></label>${(item.youtube_matches||[]).map(match=>`<small>Cùng file đã đăng trong 30 ngày: <a href="${esc(match.url)}" target="_blank" rel="noopener noreferrer">${esc(match.title||match.id)}</a></small>`).join('')}`;
+      }else text='<small>Video mới · sẽ tạo bản nháp.</small>';
+      return `<div class="review-item"><b>${esc(item.channel)} · ${esc(item.title||item.path?.split(/[\\/]/).pop()||'Video')}</b><small class="path-detail">${esc(item.path||'')}</small>${assetErrorsMarkup(item.asset_errors)}${text}</div>`;
+    }).join('');
+    const errors=preview.errors||[];
+    modal('Cập nhật thư mục liên kết',`<div class="info-box">Mới ${preview.counts.new||0} · thay bản nháp ${preview.counts.changed||0} · giữ nguyên ${preview.counts.unchanged||0} · gỡ khỏi hàng đợi ${preview.counts.remove||0}. Video đã đăng sẽ chỉ được đăng lại khi bạn tick.</div>${errors.length?`<div class="modal-error">Không thể cập nhật an toàn. Sửa lỗi theo đường dẫn rồi quét lại:<br>${errors.map(esc).join('<br>')}</div>`:''}<div class="review-list">${rows||'<div class="review-item">Không có thay đổi trong các thư mục đã liên kết.</div>'}</div><div class="modal-footer"><button class="button" id="update-cancel">Đóng</button><button class="button primary" id="update-confirm" ${errors.length?'disabled':''}>Áp dụng cập nhật</button></div>`);
+    $('#update-cancel').onclick=closeModal;
+    $('#update-confirm').onclick=async()=>{
+      const confirm=$('#update-confirm');confirm.disabled=true;
+      const allow_youtube=[],repost=[];
+      for(const input of $$('[data-update-choice]:checked')){
+        const item=actions[Number(input.dataset.updateChoice)];
+        const choice={account:item.account,path:item.path,fingerprint:item.fingerprint};
+        (input.dataset.choiceKind==='repost'?repost:allow_youtube).push(choice);
+      }
+      try{
+        const result=await task('/api/update-folders',{accounts,allow_youtube,repost},'Đang áp dụng thay đổi vào hàng đợi…');
+        closeModal();await refresh();
+        const lines=Object.values(result.by_channel||{}).map(channel=>`<div class="review-item"><b>${esc(channel.name)}</b><small>Thêm ${channel.added} · thay ${channel.replaced} · gỡ ${channel.removed} · giữ ${channel.unchanged} · trùng ${channel.duplicates} · đăng lại chưa chọn ${channel.repost_skipped}</small></div>`).join('');
+        modal('Đã cập nhật hàng đợi',`<div class="info-box">Đã quét xong các thư mục liên kết. Video đã đăng trên YouTube không bị xóa.</div><div class="review-list">${lines||'<div class="review-item">Không có thay đổi cần áp dụng.</div>'}</div>`);
+      }catch(error){errorInModal(error);confirm.disabled=false;}
+    };
+  }catch(error){toast(error.message,true);}
+  finally{folderUpdateActive=false;button.disabled=state.jobs.some(active);}
+}
 function options(list, value){return list.map(([id,name])=>`<option value="${esc(id)}" ${String(id)===String(value)?'selected':''}>${esc(name)}</option>`).join('');}
-function channelOptions(value){return options(state.accounts.map(a=>[a.id,a.name+' · '+a.channel_id]),value);}
+function channelOptions(value){return options(state.accounts.map(a=>[a.id,a.name]),value);}
 function showView(view,persist=true){state.view=view;$$('.view').forEach(el=>el.hidden=el.id!=='view-'+view);$$('.nav').forEach(el=>el.classList.toggle('active',el.dataset.view===view));$('#crumb').textContent={queue:'Hàng đợi',channels:'Kênh của tôi',history:'Nhật ký hoạt động',guide:'Hướng dẫn'}[view];render();if(persist)saveUI();}
 function groupByChannel(jobs){const order=new Map(state.accounts.map((account,index)=>[account.id,index]));let next=order.size;for(const job of jobs)if(!order.has(job.account))order.set(job.account,next++);return [...jobs].sort((left,right)=>order.get(left.account)-order.get(right.account)||(left.queue_position??0)-(right.queue_position??0));}
 function reorderable(job){return Boolean(job?.id);}
 function publishingMode(job){return job.publishing_override?(job.publish_at?'schedule':job.privacy):'inherit';}
-function publishingCell(job){const choices=[['inherit','Theo thiết lập kênh'],['private','Riêng tư'],['unlisted','Không công khai'],['public','Công khai ngay'],['schedule','Lên lịch công khai']];const locked=job.state!=='draft'||!editable(job);const detail=job.publish_at?fmt(job.publish_at):(job.publishing_override?'Thiết lập riêng':'Theo kênh · '+privacy[job.privacy]);return `<div class="publishing-cell"><select data-publishing="${job.id}" aria-label="Chế độ xuất bản của ${esc(job.title)}" ${locked?'disabled':''}>${options(choices,publishingMode(job))}</select><small>${esc(detail)}${job.publish_at?'<br>Giờ trên máy của bạn':''}</small></div>`;}
+function publishingCell(job){const choices=[['inherit','Theo thiết lập kênh'],['private','Riêng tư'],['unlisted','Không công khai'],['public','Công khai ngay'],['schedule','Lên lịch công khai']];const locked=job.state!=='draft'||!editable(job)||job.asset_errors?.length;const detail=job.publish_at?fmt(job.publish_at):(job.publishing_override?'Thiết lập riêng':'Theo kênh · '+privacy[job.privacy]);return `<div class="publishing-cell"><select data-publishing="${job.id}" aria-label="Chế độ xuất bản của ${esc(job.title)}" ${locked?'disabled':''}>${options(choices,publishingMode(job))}</select><small>${esc(detail)}${job.publish_at?'<br>Giờ trên máy của bạn':''}</small></div>`;}
 function visible(){const jobs=state.jobs.filter(j=>{
   const q=$('#search').value.toLocaleLowerCase();
   if(q&&!j.title.toLocaleLowerCase().includes(q))return false;
   if(state.channel&&j.account!==state.channel)return false;
-  return state.filter==='all'||state.filter==='active'&&active(j)||state.filter==='issues'&&['warning','error','paused'].includes(j.state)||j.state===state.filter;
+  return state.filter==='all'||state.filter==='active'&&active(j)||state.filter==='issues'&&(['warning','error','paused'].includes(j.state)||j.asset_errors?.length)||j.state===state.filter;
 });return state.channel?jobs:groupByChannel(jobs);}
 function render(){
   $$('.tab').forEach(t=>t.classList.toggle('active',t.dataset.filter===state.filter));
@@ -106,42 +151,105 @@ function render(){
   $('#stat-pending').textContent=state.jobs.filter(j=>['draft','paused','queued'].includes(j.state)).length;
   $('#stat-active').textContent=state.jobs.filter(j=>['uploading','finishing'].includes(j.state)).length;
   $('#stat-done').textContent=state.jobs.filter(j=>j.state==='done').length;
-  const errors=state.jobs.filter(j=>['error','warning'].includes(j.state)).length;$('#stat-error').textContent=errors;$('#error-caption').textContent=errors?'video cần kiểm tra':'mọi thứ đang ổn';
+  const errors=state.jobs.filter(j=>['error','warning'].includes(j.state)||j.asset_errors?.length).length;$('#stat-error').textContent=errors;$('#error-caption').textContent=errors?'video cần kiểm tra':'mọi thứ đang ổn';
+  const authIssues=state.accounts.filter(a=>a.auth_status==='reauth_required');
+  $('#auth-warning').hidden=!authIssues.length;
+  $('#auth-warning').innerHTML=authIssues.length?`<b>Cần kết nối lại ${authIssues.length} kênh</b><p>${authIssues.map(a=>esc(a.name)).join(', ')} · Google đã từ chối thông tin xác thực. Hãy kết nối lại để tiếp tục thao tác với các kênh này.</p><div class="auth-warning-actions">${authIssues.map(a=>`<button class="button small" data-reconnect="${a.id}">Kết nối lại ${esc(a.name)}</button>`).join('')}</div>`:'';
   const current=state.channel;
   const channelHTML='<option value="">Tất cả các kênh</option>'+options(state.accounts.map(a=>[a.id,a.name]),current);
   if($('#channel-filter').innerHTML!==channelHTML)$('#channel-filter').innerHTML=channelHTML;
   const rows=visible(), rowSelection=selectedFrom(rows);$('#empty').hidden=state.jobs.length>0;$('#no-results').hidden=!state.jobs.length||!!rows.length;
-  $('#jobs').innerHTML=rows.map(j=>`<tr data-job="${j.id}" data-account="${j.account}"><td><input type="checkbox" data-select="${j.id}" ${state.selected.has(j.id)?'checked':''} aria-label="Chọn ${esc(j.title)}"></td><td><div class="video-cell"><span class="drag-handle" draggable="true" data-drag="${j.id}" title="Kéo để đổi thứ tự trong kênh" aria-label="Kéo để sắp xếp ${esc(j.title)}">⠿</span><span class="video-icon">▶</span><div><button class="video-name" data-edit="${j.id}" title="${esc(j.title)}">${esc(j.title)}</button><small class="video-sub">${bytes(j.size)} · ${esc(j.path.split(/[\\/]/).pop())}</small></div></div></td><td title="${esc(account(j.account)?.channel_id||'')}">${esc(account(j.account)?.name||'Chưa kết nối kênh')}</td><td>${publishingCell(j)}</td><td><span class="badge ${j.state}" title="${esc(j.error)}">${labels[j.state]}${j.state==='uploading'?' '+j.progress+'%':''}</span>${active(j)||j.state==='paused'?`<div class="progress"><i style="width:${Number(j.progress)||0}%"></i></div>`:''}</td><td><div class="row-actions">${active(j)?`<button class="icon-button" data-pause="${j.id}" aria-label="Tạm dừng ${esc(j.title)}">Ⅱ</button>`:j.state!=='done'?`<button class="icon-button" data-start="${j.id}" aria-label="Bắt đầu hoặc tiếp tục ${esc(j.title)}">▷</button>`:''}<button class="icon-button" data-edit="${j.id}" aria-label="Chi tiết ${esc(j.title)}">⋯</button></div></td></tr>`).join('');
+  $('#jobs').innerHTML=rows.map(j=>{const assetIssues=j.asset_errors||[];const assetBlocked=assetIssues.length>0;return `<tr data-job="${j.id}" data-account="${j.account}"><td><input type="checkbox" data-select="${j.id}" ${state.selected.has(j.id)?'checked':''} aria-label="Chọn ${esc(j.title)}"></td><td><div class="video-cell"><span class="drag-handle" draggable="true" data-drag="${j.id}" title="Kéo để đổi thứ tự trong kênh" aria-label="Kéo để sắp xếp ${esc(j.title)}">⠿</span><span class="video-icon">▶</span><div><button class="video-name" data-edit="${j.id}" title="${esc(j.title)}">${esc(j.title)}</button><small class="video-sub">${bytes(j.size)} · ${esc(j.path.split(/[\\/]/).pop())}</small></div></div></td><td>${esc(account(j.account)?.name||'Chưa kết nối kênh')}</td><td>${publishingCell(j)}</td><td><span class="badge ${assetBlocked?'asset-error':j.state}" title="${esc([j.error,...assetIssues].filter(Boolean).join('\n'))}">${assetBlocked?'Thiếu file':labels[j.state]}${j.state==='uploading'?' '+j.progress+'%':''}</span>${assetBlocked?`<small class="asset-error-detail">${assetIssues.map(esc).join('<br>')}</small>`:''}${active(j)||j.state==='paused'?`<div class="progress"><i style="width:${Number(j.progress)||0}%"></i></div>`:''}</td><td><div class="row-actions">${active(j)?`<button class="icon-button" data-pause="${j.id}" aria-label="Tạm dừng ${esc(j.title)}">Ⅱ</button>`:j.state!=='done'?`<button class="icon-button" data-start="${j.id}" ${assetBlocked?'disabled title="Sửa file trong thư mục rồi bấm Cập nhật"':''} aria-label="Bắt đầu hoặc tiếp tục ${esc(j.title)}">▷</button>`:''}<button class="icon-button" data-edit="${j.id}" aria-label="Chi tiết ${esc(j.title)}">⋯</button></div></td></tr>`}).join('');
   $('#table-summary').textContent=rows.length+' / '+state.jobs.length+' video';$('#selection-label').textContent=rowSelection.length?'Đã chọn '+rowSelection.length+' video':'Chưa chọn video';
   $('#select-all').checked=rows.length>0&&rows.every(j=>state.selected.has(j.id));$('#select-all').indeterminate=rows.some(j=>state.selected.has(j.id))&&!$('#select-all').checked;
   ['bulk-open','schedule-open','start-selected','remove-selected'].forEach(id=>$('#'+id).disabled=!rowSelection.length);
   $('#pause-all').disabled=!state.jobs.some(active);
+  const uploadBusy=state.jobs.some(active);$('#update-folders').disabled=uploadBusy||folderUpdateActive;
+  $('#update-folders').title=uploadBusy?'Tạm dừng và chờ mọi video ngừng tải lên trước khi cập nhật':'Quét lại các thư mục đã liên kết';
   if(state.view==='channels')renderChannels();
   if(state.view==='history')$('#events').innerHTML=state.events.length?state.events.map(e=>`<div class="event ${esc(e.level)}"><time>${fmt(e.time)}</time><span>${esc(e.message)}</span></div>`).join(''):'<div class="no-results">Chưa có hoạt động. Kết nối kênh để bắt đầu.</div>';
 }
 function renderChannels(){
-  $('#channels-grid').innerHTML=state.accounts.length?state.accounts.map(a=>`<article class="channel-card"><div class="avatar">${esc(a.name[0]?.toUpperCase())}</div><h3>${esc(a.name)}</h3><p>${esc(a.channel_id)}<br>Đã kết nối ${fmt(a.connected)}</p><button class="button small" data-channel="${a.id}">Xem hàng đợi</button><button class="button small danger" data-forget="${a.id}">Ngắt kết nối</button></article>`).join(''):'<article class="channel-card"><div class="avatar">＋</div><h3>Kết nối kênh đầu tiên</h3><p>Đăng nhập trên trang Google. UpVideo không yêu cầu mật khẩu của bạn.</p><button class="button primary" id="first-connect">Kết nối Google</button></article>';
+  $('#channels-grid').innerHTML=state.accounts.length?state.accounts.map(a=>{const watch=state.watches.find(item=>item.account===a.id);const auth=a.auth_status==='reauth_required'?`<span class="channel-auth expired" title="${esc(a.auth_error)}">Cần kết nối lại</span>`:'<span class="channel-auth">Thông tin đã lưu</span>';return `<article class="channel-card"><div class="avatar">${esc(a.name[0]?.toUpperCase())}</div><h3>${esc(a.name)}</h3><p>Đã kết nối ${fmt(a.connected)}<br>${auth}${watch?'<br>Thư mục: '+esc(watch.path):'<br>Chưa liên kết thư mục'}</p><div class="channel-actions"><button class="button small" data-channel="${a.id}">Xem hàng đợi</button><button class="button small" data-import-channel="${a.id}">Chọn thư mục</button><button class="button small danger" data-forget="${a.id}">Xóa kênh</button><button class="button small" data-reconnect="${a.id}">Kết nối lại</button></div></article>`}).join(''):'<article class="channel-card"><div class="avatar">＋</div><h3>Kết nối kênh đầu tiên</h3><p>Đăng nhập trên trang Google. UpVideo không yêu cầu mật khẩu của bạn.</p><button class="button primary" id="first-connect">Kết nối Google</button></article>';
 }
 function publishingEditorActive(){return document.activeElement?.matches?.('#jobs select[data-publishing]')||false;}
 function queueInteractionActive(){return publishingEditorActive()||queueDrag!==null;}
 async function refresh(){if(refreshing||shuttingDown)return;refreshing=true;try{const data=await api('/api/state');Object.assign(state,data);state.selected=new Set([...state.selected].filter(id=>state.jobs.some(j=>j.id===id)));if(state.channel&&!state.accounts.some(a=>a.id===state.channel))state.channel='';$('#connection').innerHTML='<i></i> Đã kết nối';$('#offline-notice').hidden=true;if(!queueInteractionActive())render();}catch(e){$('#connection').textContent='Mất kết nối · mở lại ứng dụng';$('#offline-notice').hidden=false;$('#offline-message').textContent=e.message;}finally{refreshing=false;}}
+async function checkConnectionsOnOpen(){
+  if(authCheckStarted)return;authCheckStarted=true;
+  try{
+    const pending=await api('/api/check-connections',{});if(!pending.task)return;
+    while(true){await new Promise(resolve=>setTimeout(resolve,650));const result=await api('/api/task?id='+pending.task);if(result.state==='error')throw new Error(result.error);if(result.state==='done'){await refresh();return;}}
+  }catch(error){authCheckStarted=false;toast('Chưa kiểm tra được quyền Google của các kênh: '+error.message,true);}
+}
 
-function connect(){
+async function startReconnect(target, requestUrl, allowNewClient=false){
+  const popup=window.open('about:blank','_blank','popup,width=560,height=760');
+  if(!popup)throw new Error('Trình duyệt đã chặn cửa sổ Google. Cho phép popup cho ứng dụng rồi thử lại.');
+  let timer,expectedState='',cleanup=()=>{};
+  const resultPromise=new Promise((resolve,reject)=>{
+    const accept=result=>{if(result?.type!=='upvideo-oauth-result'||!expectedState||result.state!==expectedState)return;cleanup();resolve(result);};
+    cleanup=()=>{window.removeEventListener('message',receive);window.removeEventListener('storage',receiveStorage);clearInterval(timer);};
+    const receive=event=>{
+      if(event.origin!==location.origin||event.source!==popup)return;
+      accept(event.data);
+    };
+    const receiveStorage=event=>{if(event.key!=='upvideo.oauth.callback'||!event.newValue)return;try{accept(JSON.parse(event.newValue));}catch{}};
+    window.addEventListener('message',receive);
+    window.addEventListener('storage',receiveStorage);
+    timer=setInterval(()=>{if(popup.closed){cleanup();reject(new Error('Cửa sổ Google đã đóng trước khi hoàn tất kết nối.'));}},500);
+  });
+  try{
+    const data=await requestUrl();expectedState=new URL(data.url).searchParams.get('state')||'';popup.location.href=data.url;
+    modal('Đang kết nối lại '+target.name,`<div class="info-box">Đăng nhập Google và cấp quyền cho đúng kênh <b>${esc(target.name)}</b> trong cửa sổ vừa mở. Thông tin đăng nhập đã lưu đang được thử trước.</div><p class="helper">Hàng đợi, lịch sử và thư mục liên kết sẽ được giữ nguyên.</p>`);
+    const result=await resultPromise;popup.close();
+    if(result.success){closeModal();await refresh();toast('Đã kết nối lại '+target.name+'. Dữ liệu kênh được giữ nguyên.');return;}
+    if(result.reason==='invalid_client'||result.reason==='deleted_client'){
+      replaceReconnectClient(target,allowNewClient||result.reason==='deleted_client');return;
+    }
+    errorInModal(new Error(result.message||'Không kết nối được với Google.'));
+  }catch(error){cleanup();popup.close();throw error;}
+}
+function replaceReconnectClient(target,allowNewClient=false){
+  const title=allowNewClient?'OAuth client cũ đã bị xóa':'Cần cập nhật OAuth Client JSON';
+  const explanation=allowNewClient?'Google báo deleted_client: OAuth client cũ đã bị xóa trong Google Cloud. Tạo OAuth Client Desktop mới rồi chọn JSON mới. Sau khi Google xác nhận đúng kênh, ứng dụng chuyển hàng đợi, lịch sử và thư mục liên kết sang client mới. Hãy tạm dừng mọi tác vụ chờ hoặc đang tải lên trước khi chuyển.':'Google từ chối OAuth client đã lưu (invalid_client). Chọn JSON mới của cùng OAuth client để thay thông tin xác thực. Hàng đợi, lịch sử và thư mục liên kết sẽ được giữ nguyên.';
+  modal(title,`<div class="info-box">${explanation}</div><label class="upload-file">◇ Chọn OAuth Client JSON<input type="file" id="replacement-client-file" accept=".json,application/json"></label><div class="modal-footer"><button class="button primary" id="retry-with-client">Tiếp tục với Google ↗</button></div>`);
+  $('#retry-with-client').onclick=async()=>{
+    const button=$('#retry-with-client');button.disabled=true;
+    try{
+      const file=$('#replacement-client-file').files[0];if(!file)throw new Error('Chọn file OAuth Client JSON trước.');if(file.size>100000)throw new Error('File JSON quá lớn.');
+      const config=JSON.parse(await file.text());
+      await startReconnect(target,()=>allowNewClient
+        ?api('/api/reconnect-replace',{config,account:target.id})
+        :api('/api/connect',{config,account:target.id}),allowNewClient);
+    }catch(error){errorInModal(error);button.disabled=false;}
+  };
+}
+function connect(reconnectAccount=''){
+  const target=reconnectAccount?account(reconnectAccount):null;
+  if(target){
+    if(target.auth_error_code==='deleted_client'){replaceReconnectClient(target,true);return;}
+    modal('Kết nối lại '+target.name,`<div class="info-box">UpVideo Studio sẽ dùng OAuth client đã lưu cho <b>${esc(target.name)}</b> trước. Nếu Google báo <b>invalid_client</b>, chương trình yêu cầu JSON cùng client; nếu báo <b>deleted_client</b>, chương trình yêu cầu JSON của OAuth client Desktop mới.</div><p class="helper">Hàng đợi, lịch sử và thư mục liên kết được giữ nguyên sau khi xác nhận đúng kênh.</p><div class="modal-footer"><button class="button primary" id="reconnect-saved">Kết nối lại với Google ↗</button></div>`);
+    $('#reconnect-saved').onclick=async event=>{event.currentTarget.disabled=true;try{await startReconnect(target,()=>api('/api/reconnect',{account:target.id}));}catch(error){errorInModal(error);event.currentTarget.disabled=false;}};
+    return;
+  }
   modal('Kết nối kênh YouTube',`<p class="helper">Chọn file OAuth Client JSON loại Desktop app. File được xử lý trên máy; trình duyệt chỉ mở trang đăng nhập chính thức của Google.</p><label class="upload-file">◇ Chọn thông tin ứng dụng Google<input type="file" id="client-file" accept=".json,application/json"></label><div class="info-box">Chọn đúng kênh hoặc Brand Account trong bước đăng nhập Google. Tên và ID kênh sẽ xuất hiện sau khi kết nối thành công.</div><p class="helper">Ứng dụng cần quyền quản lý YouTube để tải video và thêm vào playlist. Project chưa audit có thể bị giới hạn video riêng tư.</p><div class="modal-footer"><button class="button primary" id="connect-google">Tiếp tục với Google ↗</button></div>`);
   $('#connect-google').onclick=async()=>{try{const file=$('#client-file').files[0];if(!file)throw new Error('Hãy chọn file JSON trước.');if(file.size>100000)throw new Error('File JSON quá lớn.');const config=JSON.parse(await file.text());const data=await api('/api/connect',{config});modal('Tiếp tục trên Google',`<div class="info-box">Đăng nhập và cấp quyền trên Google. Khi hoàn tất, quay lại đây; danh sách kênh sẽ tự cập nhật.</div><div class="modal-footer"><a class="button primary" href="${esc(data.url)}" target="_blank" rel="noopener noreferrer">Mở trang đăng nhập Google ↗</a></div>`);showView('channels');}catch(e){errorInModal(e);}};
 }
 function importVideos(channel=''){
   if(!state.accounts.length){connect();return;}
-  modal('Thêm video vào hàng đợi',`<div class="field"><label for="import-account">Kênh nhận video</label><select id="import-account">${channelOptions($('#channel-filter').value)}</select></div><div class="field"><label for="folder-path">Thư mục video</label><div class="inline"><input id="folder-path" placeholder="D:\\Videos\\Thang-09"><button class="button" id="pick-folder">Chọn thư mục</button></div><small>Quét tất cả video trong thư mục và thư mục con. Không di chuyển file gốc.</small></div><div class="info-box">Mỗi video được nhận diện bằng nội dung để tránh nhập trùng trên cùng kênh. File lớn có thể cần vài phút để kiểm tra. Nội dung mới được lưu thành bản nháp.</div><div class="modal-footer"><button class="button primary" id="do-import">Quét và thêm video</button></div>`);
+  modal('Thêm video vào hàng đợi',`<div class="field"><label for="import-mode">Cách nhập video</label><select id="import-mode"><option value="single">Một kênh</option><option value="multi">Nhiều kênh, nội dung riêng từng kênh</option></select></div><div id="single-channel-field" class="field"><label for="import-account">Kênh nhận video</label><select id="import-account">${channelOptions($('#channel-filter').value)}</select></div><div id="multi-channel-field" class="field" hidden><label>Kênh đăng theo thứ tự bạn tick</label><div id="multi-channel-list" class="review-list">${state.accounts.map(a=>`<label class="checkbox-label"><input type="checkbox" data-multi-account="${a.id}"><span class="multi-order"></span><span>${esc(a.name)}</span></label>`).join('')}</div><small>Mỗi thư mục nội dung con được gán lần lượt theo thứ tự tick kênh.</small></div><div class="field"><label id="folder-label" for="folder-path">Thư mục video</label><div class="inline"><input id="folder-path" placeholder="D:\\Videos\\Thang-09"><button class="button" id="pick-folder">Chọn thư mục</button></div><small id="folder-help">Quét video và thư mục con. File gốc không bị di chuyển.</small></div><div class="info-box">Một video được tạo thành bản nháp riêng cho mỗi kênh đã chọn. Tiêu đề, mô tả, tag và thumbnail lấy từ thư mục nội dung tương ứng.</div><div id="single-link-box" class="info-box"><p id="link-current"></p><small>Thư mục này được lưu làm nguồn của kênh để dùng khi bấm Cập nhật.</small></div><div class="modal-footer"><button class="button primary" id="do-import">Quét và thêm video</button><button class="button primary" id="preview-multi" hidden>Xem trước phân kênh</button></div>`);
   $('#do-import').textContent='Liên kết và thêm video';
   if(typeof channel==='string' && channel)$('#import-account').value=channel;
-  const watchInfo=document.createElement('div');watchInfo.className='info-box';watchInfo.innerHTML='<label><input type="checkbox" id="watch-folder" checked> Tự cập nhật bản nháp khi thư mục thay đổi</label><p>Thêm, sửa hoặc xóa file sẽ cập nhật bản nháp. Không tự bắt đầu upload. Chỉ theo dõi khi chương trình đang chạy; mỗi kênh liên kết một thư mục.</p><p id="watch-current"></p><button class="button small" id="watch-stop" type="button">Dừng theo dõi thư mục hiện tại</button>';
-  $('#do-import').parentElement.before(watchInfo);
-  const updateWatch=()=>{const w=(state.watches||[]).find(w=>w.account===$('#import-account').value);$('#watch-current').textContent=w?'Đang theo dõi: '+w.path:'Chưa liên kết thư mục.';$('#watch-stop').hidden=!w;if(w)$('#folder-path').value=w.path;};
-  $('#import-account').onchange=()=>{$('#folder-path').value='';updateWatch();};updateWatch();
-  $('#watch-stop').onclick=async()=>{try{await api('/api/unwatch',{account:$('#import-account').value});await refresh();updateWatch();toast('Đã dừng theo dõi. Giữ nguyên bản nháp và file.');}catch(e){errorInModal(e);}};
-  $('#pick-folder').onclick=async()=>{try{const result=await task('/api/pick',{},'Chọn thư mục trong cửa sổ Windows');if(result.path)$('#folder-path').value=result.path;}catch(e){errorInModal(e);}};
-  $('#do-import').onclick=async()=>{try{const path=$('#folder-path').value.trim();if(!path)throw new Error('Chọn hoặc dán đường dẫn thư mục.');const data=await task('/api/import',{path,account:$('#import-account').value,watch:$('#watch-folder').checked},'Đang quét và kiểm tra video…');closeModal();await refresh();toast(`Đã thêm ${data.added} video · bỏ qua ${data.duplicates} video trùng.`);if(data.warnings.length)modal('Kết quả nhập video',`<div class="info-box">${data.warnings.length} video cần bổ sung hoặc kiểm tra nội dung.</div><div class="review-list">${data.warnings.map(w=>`<div class="review-item">${esc(w)}</div>`).join('')}</div>`);}catch(e){errorInModal(e);}};
+  let multiOrder=[];
+  const updateOrder=()=>$$('[data-multi-account]').forEach(el=>{const at=multiOrder.indexOf(el.dataset.multiAccount);el.nextElementSibling.textContent=at<0?'':`${at+1}. `;});
+  $$('[data-multi-account]').forEach(el=>el.onchange=()=>{multiOrder=multiOrder.filter(id=>id!==el.dataset.multiAccount);if(el.checked)multiOrder.push(el.dataset.multiAccount);updateOrder();});
+  const updateLink=()=>{const link=(state.watches||[]).find(item=>item.account===$('#import-account').value);$('#link-current').textContent=link?'Thư mục đã liên kết: '+link.path:'Chưa liên kết thư mục.';if(link)$('#folder-path').value=link.path;};
+  $('#import-account').onchange=()=>{$('#folder-path').value='';updateLink();};updateLink();
+  $('#import-mode').onchange=()=>{const multi=$('#import-mode').value==='multi';$('#single-channel-field').hidden=multi;$('#multi-channel-field').hidden=!multi;$('#single-link-box').hidden=multi;$('#do-import').hidden=multi;$('#preview-multi').hidden=!multi;$('#folder-label').textContent=multi?'Thư mục gốc chứa các thư mục video':'Thư mục video';$('#folder-help').textContent=multi?'Mỗi thư mục video cần có một video và một thư mục nội dung cho từng kênh đã chọn.':'Quét video và thư mục con. File gốc không bị di chuyển.';};
+  $('#pick-folder').onclick=async()=>{const button=$('#pick-folder');if(button.disabled)return;button.disabled=true;try{const result=await task('/api/pick',{},'Chọn thư mục trong cửa sổ Windows');if(result.path)$('#folder-path').value=result.path;}catch(e){errorInModal(e);}finally{button.disabled=false;}};
+  $('#do-import').onclick=async()=>{try{const path=$('#folder-path').value.trim(),account=$('#import-account').value;if(!path)throw new Error('Chọn hoặc dán đường dẫn thư mục.');const preview=await task('/api/import-preview',{path,account},'Đang quét và kiểm tra video trên kênh…');const rows=preview.videos.map((video,index)=>`<div class="review-item"><b>${esc(video.filename)} · ${esc(video.title)}</b>${video.asset_errors?.length?`${assetErrorsMarkup(video.asset_errors)}`:''}${video.draft_duplicate?'<small>Trùng bản nháp trên kênh này · sẽ bỏ qua.</small>':video.youtube_matches.length?`<label class="checkbox-label"><input type="checkbox" data-youtube-allow="${index}"><span>Cho phép đăng lại đúng file video này</span></label>${video.youtube_matches.map(match=>`<small>Cùng file video đã đăng trong 30 ngày: <a href="${esc(match.url)}" target="_blank" rel="noopener noreferrer">${esc(match.title||match.id)}</a></small>`).join('')}`:'<small>Chưa thấy cùng file video đã đăng trong 30 ngày.</small>'}</div>`).join('');modal('Kiểm tra video trước khi thêm',`<div class="info-box">Video vẫn được thêm vào bản nháp nếu thiếu file. Bản nháp đó sẽ có cảnh báo đỏ và không thể tải lên cho đến khi bạn sửa thư mục rồi bấm Cập nhật.</div><div class="review-list">${rows}</div><div class="modal-footer"><button class="button" id="import-back">Đóng</button><button class="button primary" id="import-confirm">Tạo bản nháp</button></div>`);$('#import-back').onclick=closeModal;$('#import-confirm').onclick=async()=>{const button=$('#import-confirm');button.disabled=true;const selected=[...$$('[data-youtube-allow]:checked')].map(el=>{const video=preview.videos[Number(el.dataset.youtubeAllow)];return {path:video.path,fingerprint:video.fingerprint};});try{const result=await task('/api/import',{path,account,allow_youtube:selected},'Đang tạo bản nháp…');closeModal();await refresh();toast(`Đã thêm ${result.added} bản nháp · bỏ qua ${result.duplicates} mục trùng.`);importResultDetails(result);}catch(e){errorInModal(e);button.disabled=false;}};}catch(e){errorInModal(e);}};
+  $('#preview-multi').onclick=async()=>{try{const path=$('#folder-path').value.trim();if(!path)throw new Error('Chọn thư mục gốc trước.');if(!multiOrder.length)throw new Error('Tick ít nhất một kênh.');const payload={path,accounts:[...multiOrder]};const preview=await task('/api/multi-import-preview',payload,'Đang quét video và kiểm tra từng kênh…');const candidates=[];const rows=preview.videos.map(video=>`<div class="review-item"><b>${esc(video.folder)} · ${esc(video.video)}</b>${video.variants.map((variant,index)=>{const candidateIndex=candidates.push({account:variant.account,path:variant.path,fingerprint:variant.fingerprint})-1;const status=variant.draft_duplicate?'<small>Trùng bản nháp trên kênh này · sẽ bỏ qua.</small>':variant.youtube_matches.length?`<label class="checkbox-label"><input type="checkbox" data-multi-youtube="${candidateIndex}"><span>Cho phép đăng lại đúng file video này trên ${esc(variant.channel)}</span></label>${variant.youtube_matches.map(match=>`<small>${esc(variant.channel)} · Cùng file đã đăng trong 30 ngày: <a href="${esc(match.url)}" target="_blank" rel="noopener noreferrer">${esc(match.title||match.id)}</a></small>`).join('')}`:`<small>${index+1}. ${esc(variant.channel)} — ${esc(variant.title)} · thumb: ${esc(variant.thumbnail)} · chưa thấy cùng file đã đăng</small>`;return `<div>${status}${variant.asset_errors?.length?`${assetErrorsMarkup(variant.asset_errors)}`:''}</div>`;}).join('')}</div>`).join('');modal('Kiểm tra phân kênh trước khi nhập',`<div class="info-box">Video vẫn được thêm vào bản nháp nếu thiếu file. Bản nháp đó sẽ có cảnh báo đỏ và không thể tải lên cho đến khi bạn sửa thư mục rồi bấm Cập nhật.</div><div class="review-list">${rows}</div><div class="modal-footer"><button class="button" id="multi-back">Đóng</button><button class="button primary" id="multi-confirm">Tạo bản nháp</button></div>`);$('#multi-back').onclick=closeModal;$('#multi-confirm').onclick=async()=>{const button=$('#multi-confirm');button.disabled=true;payload.allow_youtube=[...$$('[data-multi-youtube]:checked')].map(el=>candidates[Number(el.dataset.multiYoutube)]);try{const result=await task('/api/import-multi',payload,'Đang tạo bản nháp cho các kênh…');closeModal();await refresh();toast(`Đã thêm ${result.added} bản nháp · bỏ qua ${result.duplicates} mục trùng.`);importResultDetails(result);}catch(error){errorInModal(error);button.disabled=false;}};}catch(e){errorInModal(e);}};
 }
 function boolOptions(value){return options([['','Chọn câu trả lời'],['false','Không'],['true','Có']],value===null?'':String(value));}
 function boolValue(id){const v=$(id).value;return v===''?null:v==='true';}
@@ -248,7 +356,7 @@ function plan(){
   $$('input[name="schedule-visibility"]').forEach(input=>input.onchange=updateVisibility);
   $('#schedule-save').onclick=async()=>{try{const selectedVisibility=$('input[name="schedule-visibility"]:checked').value;if(selectedVisibility==='public'&&!$('#confirm-channel-public').checked)throw new Error('Xác nhận trước khi đặt video ở chế độ công khai ngay.');const result=await task('/api/schedule',{ids:chosen.map(j=>j.id),account:aid,visibility:selectedVisibility,date:$('#schedule-date').value,slots:$('#schedule-slots').value,interval:Number($('#schedule-interval').value),offset:Number($('#schedule-offset').value),sync:$('#sync-schedule').checked,overwrite_overrides:$('#overwrite-publishing')?.checked||false,confirmed_public:selectedVisibility==='public'},selectedVisibility==='schedule'?'Đang kiểm tra và xếp lịch…':'Đang cập nhật chế độ hiển thị…');closeModal();await refresh();const skipped=result.skipped?` · giữ nguyên ${result.skipped} video có thiết lập riêng.`:'.';toast((selectedVisibility==='schedule'?`Đã xếp lại lịch ${result.count} video`:`Đã cập nhật chế độ hiển thị cho ${result.count} video`)+skipped);}catch(e){errorInModal(e);}};
 }
-function startReview(jobs){jobs=jobs.filter(j=>!active(j)&&j.state!=='done');if(!jobs.length){toast('Không có video để bắt đầu.');return;}modal('Sẵn sàng tải '+jobs.length+' video?',`<p class="helper">Kiểm tra kênh và chế độ hiển thị. Video công khai có thể xuất hiện ngay sau khi xử lý xong; video có lịch sẽ được công khai theo giờ đã chọn.</p><div class="review-list">${jobs.map(j=>`<div class="review-item"><b>${esc(j.title)}</b><small>${esc(account(j.account)?.name||'Kênh chưa kết nối')} · ${j.publish_at?fmt(j.publish_at):privacy[j.privacy]}${j.video_id?' · chỉ hoàn thiện bước còn thiếu':''}</small></div>`).join('')}</div><div class="modal-footer"><button class="button" id="review-back">Quay lại</button><button class="button primary" id="confirm-start">▶ Bắt đầu tải lên</button></div>`);$('#review-back').onclick=closeModal;$('#confirm-start').onclick=async()=>{try{await api('/api/start',{ids:jobs.map(j=>j.id)});closeModal();await refresh();toast('Đã đưa video vào hàng đợi tải lên.');}catch(e){errorInModal(e);}};}
+function startReview(jobs){jobs=jobs.filter(j=>!active(j)&&j.state!=='done');if(!jobs.length){toast('Không có video để bắt đầu.');return;}modal('Sẵn sàng tải '+jobs.length+' video?',`<p class="helper">Kiểm tra kênh và chế độ hiển thị. Video công khai có thể xuất hiện ngay sau khi xử lý xong; video có lịch sẽ được công khai theo giờ đã chọn.</p><div class="review-list">${jobs.map(j=>`<div class="review-item"><b>${esc(j.title)}</b><small>${esc(account(j.account)?.name||'Kênh chưa kết nối')} · ${j.publish_at?fmt(j.publish_at):privacy[j.privacy]}${j.video_id?' · chỉ hoàn thiện bước còn thiếu':''}</small>${assetErrorsMarkup(j.asset_errors)}</div>`).join('')}</div><div class="modal-footer"><button class="button" id="review-back">Quay lại</button><button class="button primary" id="confirm-start">▶ Bắt đầu tải lên</button></div>`);$('#review-back').onclick=closeModal;$('#confirm-start').onclick=async()=>{try{const result=await api('/api/start',{ids:jobs.map(j=>j.id)});closeModal();await refresh();if(result.blocked?.length){modal('Một số video chưa thể tải lên',`<div class="info-box">Đã đưa ${result.queued} video đủ file vào hàng đợi. ${result.blocked.length} video thiếu hoặc lỗi file đã được giữ lại trong bản nháp.</div><div class="review-list">${result.blocked.map(item=>`<div class="review-item"><b>${esc(item.title)} · ${esc(account(item.account)?.name||'Kênh')}</b>${assetErrorsMarkup(item.errors)}</div>`).join('')}</div>`);}else toast(`Đã đưa ${result.queued} video vào hàng đợi tải lên.`);}catch(e){errorInModal(e);}};}
 
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;try{
   if(b.dataset.view)showView(b.dataset.view);
@@ -257,7 +365,10 @@ document.addEventListener('click',async e=>{const b=e.target.closest('button');i
   if(b.dataset.start)startReview(state.jobs.filter(j=>j.id===b.dataset.start));
   if(b.dataset.pause){await api('/api/pause',{ids:[b.dataset.pause]});toast('Đang tạm dừng sau phần dữ liệu hiện tại…');await refresh();}
   if(b.dataset.channel){state.channel=b.dataset.channel;showView('queue');}
-  if(b.dataset.forget){const aid=b.dataset.forget;modal('Ngắt kết nối kênh?',`<p class="helper">Token trên máy sẽ bị xóa. Hàng đợi và lịch sử được giữ lại; kết nối lại bằng cùng OAuth client và kênh để tiếp tục.</p><div class="modal-footer"><button class="button danger" id="confirm-forget">Ngắt kết nối</button></div>`);$('#confirm-forget').onclick=async()=>{try{await api('/api/forget',{account:aid});closeModal();await refresh();}catch(err){errorInModal(err);}};}
+  if(b.dataset.importChannel)importVideos(b.dataset.importChannel);
+  if(b.dataset.reconnect)connect(b.dataset.reconnect);
+  if(b.id==='update-folders')await updateLinkedFolders();
+  if(b.dataset.forget){const aid=b.dataset.forget,a=account(aid),jobs=state.jobs.filter(j=>j.account===aid);modal('Xóa kênh khỏi UpVideo Studio?',`<div class="info-box"><b>${esc(a?.name||'Kênh YouTube')}</b><br>Thao tác này xóa kênh khỏi ứng dụng, token lưu trên máy, thư mục liên kết, thiết lập, hàng đợi và lịch sử video của kênh. File trong thư mục máy tính và nội dung trên YouTube được giữ nguyên. Nếu đang upload, ứng dụng sẽ tạm dừng an toàn trước khi xóa.</div><p class="helper">Bạn có thể kết nối lại kênh sau này; dữ liệu cục bộ đã xóa sẽ không được khôi phục.</p><div class="modal-footer"><button class="button" id="cancel-delete-channel">Hủy</button><button class="button danger" id="confirm-delete-channel">Xóa kênh và dữ liệu</button></div>`);$('#cancel-delete-channel').onclick=closeModal;$('#confirm-delete-channel').onclick=async()=>{const button=$('#confirm-delete-channel');button.disabled=true;try{await task('/api/delete-channel',{account:aid},'Đang dừng upload và xóa dữ liệu kênh…');for(const job of jobs)state.selected.delete(job.id);if(state.channel===aid)state.channel='';saveUI();closeModal();await refresh();toast('Đã xóa kênh và dữ liệu liên quan khỏi UpVideo Studio.');}catch(err){errorInModal(err);button.disabled=false;}};}
   if(b.id==='first-connect')connect();
 }catch(err){toast(err.message,true);}});
 $('#jobs').addEventListener('change',async e=>{
@@ -290,7 +401,7 @@ $('#jobs').addEventListener('dragend',()=>{queueDrag=null;clearDropMarkers();$('
 $('#select-all').onchange=e=>{visible().forEach(j=>e.target.checked?state.selected.add(j.id):state.selected.delete(j.id));render();saveUI();};
 $('#search').oninput=()=>{render();saveUI();};$('#channel-filter').onchange=()=>{state.channel=$('#channel-filter').value;render();saveUI();};
 $('#import-open').onclick=importVideos;$('#empty-add').onclick=importVideos;$('#connect-open').onclick=connect;
-$('#modal-close').onclick=closeModal;$('#modal').addEventListener('cancel',()=>modalGeneration++);
+$('#modal-close').onclick=closeModal;$('#modal').addEventListener('cancel',()=>modalGeneration++);$('#busy').addEventListener('cancel',event=>event.preventDefault());
 $('#bulk-open').onclick=bulk;$('#schedule-open').onclick=plan;$('#start-selected').onclick=()=>startReview(visibleSelection());
 $('#remove-selected').onclick=async()=>{
   const jobs=visibleSelection();if(!jobs.length)return;
@@ -298,8 +409,8 @@ $('#remove-selected').onclick=async()=>{
   try{
     const preview=await api('/api/remove-preview',{ids});
     const busy=jobs.filter(active).length;const uploaded=jobs.filter(job=>job.video_id||job.state==='done').length;
-    modal('Xóa '+jobs.length+' video?',`<div class="info-box">${busy?`Chương trình sẽ dừng an toàn ${busy} tác vụ đang chạy rồi mới xóa.<br>`:''}${uploaded?`${uploaded} video đã có dữ liệu trên YouTube sẽ <b>không bị xóa khỏi YouTube</b>.<br>`:''}Thư mục nguồn còn tồn tại sẽ được chuyển ra ngoài thư mục liên kết và không bị tự quét lại.</div><div class="review-list">${preview.moved.map(p=>p.missing?`<div class="review-item" style="overflow-wrap:anywhere"><strong>File nguồn không còn:</strong> ${esc(p.source)}<br>Chỉ xóa mục khỏi hàng đợi.</div>`:`<div class="review-item" style="overflow-wrap:anywhere"><strong>Từ:</strong> ${esc(p.source)}<br><strong>Đến:</strong> ${esc(p.destination)}</div>`).join('')}</div><div class="modal-footer"><button class="button danger" id="confirm-remove">${busy?'Dừng tác vụ và xóa':'Xóa video'}</button></div>`);
-    $('#confirm-remove').onclick=async()=>{const button=$('#confirm-remove');button.disabled=true;try{await task('/api/remove',{ids},busy?'Đang dừng tác vụ an toàn…':'Đang chuyển video…');jobs.forEach(j=>state.selected.delete(j.id));saveUI();closeModal();await refresh();toast('Đã chuyển thư mục và xóa video khỏi hàng đợi.');}catch(e){errorInModal(e);button.disabled=false;}};
+    modal('Xóa '+jobs.length+' video khỏi chương trình?',`<div class="info-box">${busy?`Chương trình sẽ dừng an toàn ${busy} tác vụ đang chạy rồi mới xóa.<br>`:''}${uploaded?`${uploaded} video đã có dữ liệu trên YouTube sẽ <b>không bị xóa khỏi YouTube</b>.<br>`:''}Thao tác này chỉ xóa video khỏi hàng đợi và chương trình. File video, TXT/DOCX, thumbnail và thư mục trên máy sẽ được giữ nguyên.</div><div class="review-list">${preview.videos.map(video=>`<div class="review-item" style="overflow-wrap:anywhere">${esc(video.title)}</div>`).join('')}</div><div class="modal-footer"><button class="button danger" id="confirm-remove">${busy?'Dừng tác vụ và xóa':'Xóa video khỏi chương trình'}</button></div>`);
+    $('#confirm-remove').onclick=async()=>{const button=$('#confirm-remove');button.disabled=true;try{await task('/api/remove',{ids},busy?'Đang dừng tác vụ an toàn…':'Đang xóa khỏi chương trình…');jobs.forEach(j=>state.selected.delete(j.id));saveUI();closeModal();await refresh();toast('Đã xóa video khỏi hàng đợi. File trên máy vẫn được giữ nguyên.');}catch(e){errorInModal(e);button.disabled=false;}};
   }catch(e){toast(e.message,true);}
 };
 $('#pause-all').onclick=async()=>{try{await api('/api/pause',{ids:state.jobs.filter(active).map(j=>j.id)});toast('Đang lưu và tạm dừng các lượt tải lên…');await refresh();}catch(e){toast(e.message,true);}};
@@ -308,4 +419,4 @@ $('#download-template').onclick=()=>{const a=document.createElement('a');a.href=
 window.addEventListener('storage',event=>{if(event.key===UI_STORAGE_KEY)restoreUI(event.newValue);});
 window.addEventListener('focus',()=>{readUI();refresh();});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){readUI();refresh();}});
-readUI();refresh();setInterval(refresh,2500);
+readUI();refresh();checkConnectionsOnOpen();setInterval(refresh,2500);

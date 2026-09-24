@@ -9,19 +9,9 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-"%PYTHON_EXE%" -m PyInstaller --clean --noconfirm --onedir --windowed --name UpVideoStudio --add-data "web;web" run.py
+"%PYTHON_EXE%" -m PyInstaller --clean --noconfirm --onefile --windowed --name UpVideoStudio --add-data "web;web" run.py
 if errorlevel 1 (
     pause
     exit /b 1
 )
-powershell -NoProfile -Command "Compress-Archive -LiteralPath 'dist\UpVideoStudio' -DestinationPath 'UpVideoStudio-Windows.zip' -Force"
-if errorlevel 1 (
-    pause
-    exit /b 1
-)
-echo Da tao UpVideoStudio-Windows.zip va UpVideoStudio-Windows.sha256.txt
-powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 -LiteralPath 'UpVideoStudio-Windows.zip').Hash | Set-Content -Encoding ascii 'UpVideoStudio-Windows.sha256.txt'"
-if errorlevel 1 (
-    pause
-    exit /b 1
-)
+echo Da tao dist\UpVideoStudio.exe. Chi can gui file EXE nay.

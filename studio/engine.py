@@ -5,8 +5,10 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .domain import fingerprint, validate, parse_date, utc_now
+from .domain import fingerprint, validate_source, parse_date, utc_now
 from .google import UPLOAD, ApiError, header
+
+MAX_CONCURRENT_CHANNELS = 10
 
 
 class Paused(Exception):
@@ -20,7 +22,7 @@ class Engine:
         self.stop = threading.Event()
         self.cancel = set()
         self.active = {}  # one worker per channel, even across OAuth clients
-        self.pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix='upload')
+        self.pool = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_CHANNELS, thread_name_prefix='upload')
         self.thread = threading.Thread(target=self.dispatch, daemon=True)
         if dispatch:
             self.thread.start()
@@ -30,19 +32,27 @@ class Engine:
             selected = [self.store.job(jid) for jid in dict.fromkeys(ids)]
             if not selected:
                 raise ValueError('Chọn ít nhất một video.')
+            blocked = []
+            eligible = []
             for job in selected:
                 if job['state'] in ('uploading', 'queued', 'finishing', 'done'):
+                    continue
+                if job.get('asset_errors'):
+                    blocked.append({'title': job.get('title', ''), 'account': job['account'],
+                                    'path': job['path'], 'errors': job['asset_errors']})
                     continue
                 if not self.store.account(job['account']):
                     raise ValueError('Kết nối lại kênh trước khi chạy.')
                 if not job['video_id']:
-                    validate(job, check_time=not bool(job['session']))
+                    validate_source(job, check_time=not bool(job['session']))
                     if not Path(job['path']).is_file():
                         raise ValueError('Không tìm thấy video: ' + job['path'])
-            ready = [j for j in selected if j['state'] not in ('uploading', 'queued', 'finishing', 'done')]
+                eligible.append(job)
+            ready = [j for j in eligible if j['state'] not in ('uploading', 'queued', 'finishing', 'done')]
             self.store.update_many([(j['id'], {'state': 'queued', 'error': ''}) for j in ready])
             for job in ready:
                 self.cancel.discard(job['id'])
+            return {'queued': len(ready), 'blocked': blocked}
 
     def pause(self, ids):
         with self.lock:
@@ -71,7 +81,7 @@ class Engine:
                     if not account:
                         continue
                     key = account['channel_id']
-                    if key in self.active or len(self.active) >= 3:
+                    if key in self.active or len(self.active) >= MAX_CONCURRENT_CHANNELS:
                         continue
                     self.store.update(job['id'], state='uploading')
                     self.active[key] = self.pool.submit(self.run, job['id'])
@@ -89,6 +99,8 @@ class Engine:
 
     def upload(self, job):
         jid, aid = job['id'], job['account']
+        if job.get('asset_errors'):
+            raise ValueError('Không thể tải video vì thiếu hoặc có lỗi ở các file nguồn: ' + '; '.join(job['asset_errors']))
         path = Path(job['path'])
         self.checkpoint(jid)
         if fingerprint(path, lambda: self.checkpoint(jid)) != job['fingerprint']:
@@ -96,7 +108,7 @@ class Engine:
         self.checkpoint(jid)
         mime = mimetypes.guess_type(path.name)[0] or 'application/octet-stream'
         if not job['session']:
-            validate(job)
+            validate_source(job)
             status = {'privacyStatus': job['privacy'], 'selfDeclaredMadeForKids': job['made_for_kids'],
                       'containsSyntheticMedia': job['synthetic']}
             if job['publish_at']:
@@ -169,10 +181,18 @@ class Engine:
         if job['thumbnail'] and not job['thumbnail_done']:
             self.checkpoint(jid)
             thumb = Path(job['thumbnail'])
-            if not thumb.is_file() or thumb.stat().st_size > 2 * 1024 * 1024:
-                raise ValueError('Thumbnail bị mất hoặc vượt quá 2 MB. Khôi phục file rồi thử lại.')
-            self.google.raw(aid, 'POST', UPLOAD + 'thumbnails/set?videoId=' + vid + '&uploadType=media',
-                            thumb.read_bytes(), {'Content-Type': mimetypes.guess_type(thumb.name)[0] or 'image/jpeg'})
+            try:
+                if (not thumb.is_file() or thumb.suffix.lower() not in ('.jpg', '.jpeg', '.png')
+                        or thumb.stat().st_size > 2 * 1024 * 1024):
+                    raise ValueError(f'{thumb}: Thumbnail phải là JPG/PNG tồn tại và không quá 2 MB.')
+                data = thumb.read_bytes()
+            except OSError as exc:
+                raise ValueError(f'{thumb}: Không đọc được file thumbnail: {exc}') from None
+            try:
+                self.google.raw(aid, 'POST', UPLOAD + 'thumbnails/set?videoId=' + vid + '&uploadType=media',
+                                data, {'Content-Type': mimetypes.guess_type(thumb.name)[0] or 'image/jpeg'})
+            except ApiError as exc:
+                raise ValueError(f'{thumb}: YouTube không chấp nhận thumbnail: {exc}') from None
             self.store.update(jid, thumbnail_done=True)
         done = list(job['completed_playlists'])
         for playlist in job['playlists']:
@@ -195,7 +215,7 @@ class Engine:
         if not job['publish_at'] and status.get('privacyStatus') != job['privacy']:
             raise ValueError('Video đã tải lên nhưng chế độ hiển thị khác yêu cầu. Kiểm tra project API trong YouTube Studio.')
         self.store.update(jid, state='done', error='', processing=processing)
-        self.store.event('Đã tải lên: ' + job['title'])
+        self.store.event('Đã tải lên: ' + job['title'], account=aid)
 
     def run(self, jid):
         try:
@@ -212,7 +232,7 @@ class Engine:
             state = 'warning' if job['video_id'] else 'error'
             message = str(exc) if isinstance(exc, (ApiError, ValueError)) else 'Có lỗi xử lý. Kiểm tra file và thử tiếp tục.'
             self.store.update(jid, state=state, error=message)
-            self.store.event(job['title'] + ': ' + message, 'error')
+            self.store.event(job['title'] + ': ' + message, 'error', account=job['account'])
             if isinstance(exc, ApiError) and exc.reason in ('quotaExceeded', 'uploadLimitExceeded'):
                 with self.lock:
                     account = self.store.account(job['account'])

@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
-if exist "dist\UpVideoStudio\UpVideoStudio.exe" (
-    "dist\UpVideoStudio\UpVideoStudio.exe"
+if exist "dist\UpVideoStudio.exe" (
+    "dist\UpVideoStudio.exe"
 ) else (
     python run.py
 )

@@ -2,7 +2,7 @@
 
 Ứng dụng Windows cục bộ để quản lý nội dung, playlist, lịch xuất bản và tiến trình tải video lên nhiều kênh YouTube.
 
-## Xóa video an toàn ở mọi trạng thái
+## Xóa video khỏi chương trình
 
 Chọn ít nhất một bản nháp rồi bấm **Khai báo nội dung**: thiết lập được lưu theo kênh và áp dụng cho toàn bộ bản nháp chưa bắt đầu của kênh đó. **Xếp lịch** yêu cầu một kênh cụ thể, lưu quy tắc cho kênh và chỉ cập nhật những video đang chọn **Theo thiết lập kênh**. Video có thiết lập xuất bản riêng chỉ bị thay đổi khi người dùng chủ động tick **Ghi đè**. Khi mở lại chương trình, hai hộp thoại hiển thị đúng thiết lập được lưu gần nhất của kênh đang chọn. Video lỗi, tạm dừng, đang chạy và đã tải lên được giữ nguyên.
 
@@ -10,35 +10,38 @@ Khi bộ lọc **Kênh** chọn một kênh cụ thể, **Khai báo nội dung**
 
 Khi chọn **Tất cả các kênh**, hàng đợi tự nhóm video theo thứ tự kênh trong danh sách tài khoản. Kéo biểu tượng chấm ở đầu mỗi video để đổi vị trí trong cùng kênh; chương trình chặn thả sang kênh khác. Thứ tự được lưu trên máy, quyết định thứ tự upload và tính lại giờ đăng cho các bản nháp đang dùng lịch mặc định của kênh. Lịch đặt riêng và lịch của video đã bắt đầu tải không bị ghi đè.
 
-Người dùng có thể yêu cầu **Xóa video** ở mọi trạng thái. Với **Chờ tải lên**, **Đang tải lên** hoặc **Hoàn thiện**, chương trình yêu cầu dừng, chờ worker nhả file rồi mới chuyển thư mục sang `-remove video` và bỏ mục khỏi hàng đợi. Video đã có trên YouTube không bị xóa hoặc hủy lịch trên YouTube.
+Người dùng có thể yêu cầu **Xóa video** ở mọi trạng thái. Với **Chờ tải lên**, **Đang tải lên** hoặc **Hoàn thiện**, chương trình dừng tác vụ an toàn rồi gỡ mục khỏi hàng đợi và dữ liệu của chương trình. File video, TXT/DOCX, thumbnail và thư mục nguồn trên máy được giữ nguyên. Video đã có trên YouTube không bị xóa hoặc hủy lịch trên YouTube.
 
-## Xóa video bằng cách chuyển thư mục
+## Cách xóa video
 
-Chọn video → **Xóa video** → kiểm tra đường dẫn nguồn và đích → xác nhận dừng tác vụ nếu video đang chạy.
+Chọn video → **Xóa video** → xác nhận. Nếu video đang chạy, chương trình dừng tác vụ an toàn trước khi gỡ video khỏi hàng đợi.
 
-Ví dụ liên kết `D:\KenhA`: khi xóa video trong `D:\KenhA\Video01`, toàn bộ thư mục `Video01` được chuyển sang `D:\KenhA-remove video\Video01`. Video, ảnh, nội dung và các file khác trong thư mục đều được giữ; video bị bỏ khỏi hàng đợi. Bộ theo dõi `KenhA` không quét lại video này. Nếu tên thư mục đích đã tồn tại, chương trình thêm `(2)`, `(3)`… thay vì ghi đè.
+Xóa chỉ gỡ bản ghi video khỏi chương trình. Ví dụ, khi xóa video trong `D:\KenhA\Video01`, thư mục `Video01` cùng video, ảnh, nội dung và các file khác vẫn nằm nguyên tại chỗ. Video đã đăng không bị xóa khỏi YouTube.
 
-Mỗi video nên nằm trong thư mục con riêng. Nếu nhiều video chung thư mục, phải chọn tất cả và không được có công việc khác đang sử dụng file trong thư mục đó. Video nằm trực tiếp tại thư mục gốc cần được sắp xếp vào thư mục con trước; chương trình không chuyển cả thư mục gốc.
+Việc xóa khỏi chương trình không yêu cầu thay đổi cấu trúc thư mục nguồn.
 
-## Tự đồng bộ thư mục với kênh
+Nếu thư mục vẫn đang liên kết, lần bấm **Cập nhật** sau đó có thể nhận diện video này là nội dung mới và thêm lại vào hàng đợi.
 
-Mở **Thêm video**, chọn kênh và thư mục, giữ tùy chọn **Tự cập nhật bản nháp khi thư mục thay đổi**, rồi bấm **Liên kết và thêm video** một lần. Với hàng đợi đã có, chọn lại thư mục đang dùng để thiết lập liên kết; chương trình bỏ qua video trùng.
+## Cập nhật thư mục đã liên kết
 
-Khi ứng dụng chạy, thư mục và các thư mục con được kiểm tra mỗi 5 giây. Hai lần kiểm tra liên tiếp phải ổn định trước khi đọc thay đổi; video lớn có thể cần thêm thời gian tính hash. Đây là kiểm tra ổn định file, không phải xác nhận phần mềm sao chép đã hoàn thành. Không tự bắt đầu upload.
+Khi nhập video cho một kênh hoặc nhiều kênh, chương trình lưu đường dẫn và cách gán nội dung làm nguồn liên kết. Chương trình không quét nền. Bấm **Cập nhật** để quét lại thư mục của kênh đang chọn; chọn **Tất cả các kênh** để quét tất cả nguồn đã liên kết.
 
-- Thêm video: tạo bản nháp nếu nội dung file chưa có trong lịch sử cục bộ của kênh, sau đó áp dụng khai báo nội dung và quy tắc xuất bản gần nhất của kênh.
-- Sửa video, TXT/DOCX hoặc ảnh: cập nhật bản nháp tương ứng. Nội dung đã sửa trực tiếp trong UI được giữ nếu trường tương ứng trong file nguồn không đổi. Ngôn ngữ, danh mục, lịch, playlist và khai báo nội dung được giữ.
-- Xóa video: bỏ bản nháp được quản lý bởi liên kết đó. Đổi tên video giữ ID bản nháp khi nhận diện được cùng nội dung file.
-- Mục đã bắt đầu upload, đang chờ chạy hoặc đã đăng không được tự sửa/xóa. Thư mục mất kết nối hoặc lỗi đọc không làm xóa bản nháp.
-- Mỗi kênh liên kết một thư mục. Chọn thư mục khác sẽ thay liên kết; bản nháp ở thư mục cũ vẫn được giữ. Liên kết được lưu khi đóng ứng dụng, và kiểm tra lại sau khi mở.
+Nút chỉ hoạt động khi không có video nào đang chờ tải lên, đang tải lên hoặc hoàn thiện. Tạm dừng mọi tác vụ và chờ chúng dừng trước khi cập nhật.
 
-Mở lại **Thêm video** và chọn kênh để xem đường dẫn đang theo dõi hoặc bấm **Dừng theo dõi thư mục hiện tại**. Bỏ tick chỉ nhập một lần, không hủy liên kết đang có. Thao tác **Xóa video** chuyển thư mục con sang thư mục lưu riêng như mô tả ở trên, nên file không còn nằm trong phạm vi theo dõi.
+- Video mới: tạo bản nháp và áp dụng thiết lập của kênh.
+- Video/TXT/DOCX/thumbnail thay đổi: thay bản nháp cũ bằng bản mới, giữ vị trí trong hàng đợi. Video không thay đổi được giữ nguyên.
+- Video không còn trong nguồn: xóa mục liên quan khỏi hàng đợi và dữ liệu cục bộ của ứng dụng. File trên máy và video đã đăng trên YouTube không bị xóa.
+- Video đã đăng nhưng vẫn còn trong nguồn: hiện lựa chọn đăng lại. Chỉ tạo bản nháp mới khi bạn tick xác nhận.
+- Video nghi trùng trên YouTube: hiện video khớp tiêu đề/tên file để bạn xem và quyết định có thêm bản nháp hay không. Bản nháp trùng hiện có luôn được bỏ qua.
+- Nếu thư mục hoặc TXT/DOCX/thumbnail có lỗi, chương trình báo đường dẫn và không áp dụng cập nhật cho đến khi quét thành công.
+
+Với nhập nhiều kênh, thứ tự kênh được lưu cùng thư mục gốc để lần cập nhật sau gán lại đúng thư mục nội dung. Mỗi kênh chỉ có một liên kết nguồn; chọn liên kết mới sẽ thay liên kết cũ, còn các bản nháp cũ không tự bị gỡ cho đến khi bạn cập nhật liên kết mới.
 
 Ứng dụng Python mới để chuẩn bị, xếp lịch và tải video lên YouTube. Giao diện tiếng Việt chạy trong trình duyệt trên máy, không cần Node.js hoặc cài thư viện Python bên ngoài để sử dụng. Hỗ trợ kết nối Google trên Windows 10/11 bằng mã hóa DPAPI.
 
 ## Chạy ứng dụng
 
-**Cách nhanh:** mở `Start.cmd`. Trình khởi động ưu tiên bản duy nhất tại `dist/UpVideoStudio/UpVideoStudio.exe`, nếu chưa đóng gói sẽ chạy mã nguồn. Giữ nguyên thư mục `_internal` nằm cạnh EXE.
+**Cách nhanh:** mở `Start.cmd`. Trình khởi động ưu tiên bản độc lập tại `dist/UpVideoStudio.exe`, nếu chưa đóng gói sẽ chạy mã nguồn.
 
 **Chạy từ mã nguồn:** cài Python 3.12 trở lên, sau đó:
 
@@ -63,7 +66,7 @@ Dữ liệu nằm ở `%LOCALAPPDATA%\UpVideoStudio\studio.db`, độc lập v�
 4. Trong **Kênh của tôi → Kết nối kênh**, chọn JSON và mở trang Google.
 5. Chọn đúng tài khoản/kênh hoặc Brand Account, cấp quyền rồi quay lại ứng dụng. Kiểm tra tên và channel ID hiện ra.
 
-Token gắn với cả OAuth client ID và channel ID; không dùng email làm tên lưu trữ. JSON chứa token/client secret được mã hóa bằng DPAPI của tài khoản Windows hiện tại. Không chuyển dữ liệu đăng nhập sang tài khoản Windows khác. Kết nối lại cùng client và cùng kênh sẽ giữ liên kết với hàng đợi cũ.
+Token gắn với cả OAuth client ID và channel ID; không dùng email làm tên lưu trữ. JSON chứa token/client secret được mã hóa bằng DPAPI của tài khoản Windows hiện tại. Không chuyển dữ liệu đăng nhập sang tài khoản Windows khác. Khi mở giao diện, ứng dụng thử làm mới token cho từng kênh trong nền. Nếu Google từ chối quyền (`invalid_client`, `deleted_client`, `invalid_grant` hoặc thiếu quyền), kênh được đánh dấu **Cần kết nối lại** trên trang Kênh của tôi và có nút xử lý nhanh ở đầu giao diện. **Kết nối lại** trước tiên dùng OAuth client đã lưu. Với `invalid_client`, ứng dụng yêu cầu JSON cùng client; với `deleted_client`, cần tạo OAuth Client Desktop mới. Sau khi xác nhận đúng kênh, ứng dụng chuyển hàng đợi, lịch sử và thư mục liên kết sang client mới. Không thể chuyển trong lúc kênh đang có tác vụ chờ/tải lên/hoàn thiện.
 
 Quyền `youtube` được dùng vì ứng dụng vừa tải video vừa quản lý thành viên playlist. Không yêu cầu mật khẩu Google. Không kết nối tài khoản qua trang đăng nhập do UpVideo tự dựng.
 
@@ -88,6 +91,32 @@ Videos/
 - Nhận diện trùng bằng SHA-256 toàn bộ nội dung file. Lần quét đầu của file lớn có thể lâu; thao tác chạy nền. File gốc không bị sửa, đổi tên hoặc xóa.
 - `done.json` của chương trình cũ không phải bằng chứng video đã đăng trên kênh hiện tại và không được nhập làm lịch sử. Khi chuyển từ tool cũ, chỉ chọn video chưa đăng hoặc tự kiểm tra kênh trước.
 
+### Một video với nội dung riêng cho nhiều kênh
+
+Trong **Thêm video vào hàng đợi**, chọn **Nhiều kênh, nội dung riêng từng kênh**, chọn thư mục gốc và tick các kênh theo thứ tự muốn gán. Mỗi thư mục con trực tiếp của thư mục gốc là một video, chứa đúng một file video và một thư mục con cho mỗi kênh đã chọn. Mỗi thư mục nội dung cần một TXT/DOCX có trường `Title:` và một ảnh JPG/PNG. Các thư mục nội dung được sắp xếp tự nhiên theo tên rồi gán lần lượt theo thứ tự tick kênh. Ứng dụng hiện bản xem trước tên video, kênh, tiêu đề và thumbnail trước khi tạo bản nháp.
+
+```text
+Batch/
+  Video A/
+    source.mp4
+    edit-1/       # kênh được tick thứ nhất
+      info.txt
+      thumb.png
+    edit-2/       # kênh được tick thứ hai
+      info.txt
+      thumb.png
+  Video B/
+    source.mov
+    edit-1/
+      info.docx
+      cover.jpg
+    edit-2/
+      info.txt
+      thumbnail.png
+```
+
+Mỗi cặp video/kênh thành một bản nháp riêng. Folder nội dung cần đủ theo số kênh đã tick. Luồng nhập này không bật theo dõi thư mục tự động; muốn nhập thay đổi mới, hãy chạy lại thao tác và kiểm tra bản xem trước.
+
 Mẫu TXT:
 
 ```text
@@ -111,7 +140,7 @@ Hỗ trợ tiêu đề trường bằng tiếng Việt (`Tiêu đề:`, `Giới 
 3. **Khai báo nội dung:** chọn Có/Không cho video dành cho trẻ em và nội dung chỉnh sửa/tổng hợp cần khai báo; chọn thêm **Ngôn ngữ (Language)** và **Danh mục (Category)** cho nhiều bản nháp cùng lúc. Nếu các video có giá trị khác nhau, ngôn ngữ/danh mục mặc định là **Giữ nguyên từng video**. Chọn **Không khai báo** để bỏ ngôn ngữ đã lưu.
 4. **Hiển thị và xếp lịch:** tại cột **Lịch / Hiển thị**, mỗi video có thể chọn **Theo thiết lập kênh**, **Riêng tư**, **Không công khai**, **Công khai ngay** hoặc **Lên lịch công khai**. Thiết lập riêng của video có ưu tiên cao nhất. Nút **Xếp lịch** cấu hình mặc định của kênh; chế độ Lên lịch dùng ngày bắt đầu, khung giờ và khoảng cách ngày. `Mỗi 1 ngày` là hằng ngày, `Mỗi 2 ngày` là cách ngày. YouTube Data API không có thuộc tính tạo Premiere, nên Công chiếu phải được bật trực tiếp trong YouTube Studio.
 5. Mặc định đồng bộ lịch trên YouTube, kết hợp với lịch lưu trong hàng đợi và nối tiếp sau lịch xa nhất. Việc đồng bộ duyệt playlist uploads đầy đủ và dùng quota; kênh có nhiều video có thể cần thời gian. Nếu không đọc được API, thao tác báo lỗi thay vì âm thầm giả định kênh trống. Có thể chủ động bỏ chọn đồng bộ để chỉ dựa vào dữ liệu cục bộ.
-6. **Bắt đầu:** xem lại kênh/chế độ hiển thị rồi bấm xác nhận tải lên. Tối đa ba kênh chạy đồng thời, mỗi kênh chỉ có một worker kể cả khi kết nối qua nhiều OAuth client.
+6. **Bắt đầu:** xem lại kênh/chế độ hiển thị rồi bấm xác nhận tải lên. Tối đa 10 kênh chạy đồng thời, mỗi kênh chỉ có một worker kể cả khi kết nối qua nhiều OAuth client.
 7. **Tạm dừng:** dừng ở ranh giới phần dữ liệu, không hủy phần mạng đang gửi. Tiếp tục truy vấn vị trí upload do Google xác nhận.
 
 ## Khôi phục và trạng thái
@@ -168,7 +197,7 @@ python -m pip install -r requirements-build.txt
 .\Build.cmd
 ```
 
-EXE được tạo trong `dist/UpVideoStudio/`. `Build.cmd` đóng gói bằng chế độ `--windowed`, tạo `UpVideoStudio-Windows.zip` cùng `UpVideoStudio-Windows.sha256.txt`. Phân phối toàn bộ ZIP và giữ thư mục `_internal` cạnh EXE sau khi giải nén. Bản build chưa ký số nên Windows SmartScreen vẫn có thể cảnh báo.
+EXE độc lập được tạo tại `dist/UpVideoStudio.exe`. `Build.cmd` đóng gói chế độ `--onefile --windowed`; có thể gửi riêng file EXE này, không cần kèm thư mục `_internal` hoặc dự án. Bản build chưa ký số nên Windows SmartScreen vẫn có thể cảnh báo.
 
 ## Trạng thái kiểm chứng
 
@@ -183,4 +212,4 @@ EXE được tạo trong `dist/UpVideoStudio/`. `Build.cmd` đóng gói bằng c
 - [Hạn mức API](https://developers.google.com/youtube/v3/determine_quota_cost)
 - [Refresh token expiration](https://developers.google.com/identity/protocols/oauth2#expiration)
 
-Chạy `Build.cmd` để tạo bản chạy hiện tại trong `dist/UpVideoStudio` và gói phân phối `UpVideoStudio-Windows.zip`. Không lưu nhiều bản build trong cùng workspace.
+Chạy `Build.cmd` để tạo bản chạy độc lập tại `dist/UpVideoStudio.exe`. Chỉ phân phối file EXE mới nhất; không lưu nhiều bản build trong workspace.
